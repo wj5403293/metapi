@@ -836,7 +836,7 @@ export default function ProxyLogs() {
                                 {detail && pathMeta.errorMessage.trim().length > 0 && (
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <span style={{ fontWeight: 600, color: 'var(--color-danger)', flexShrink: 0 }}>错误信息</span>
-                                    <span style={{ color: 'var(--color-danger)' }}>{pathMeta.errorMessage}</span>
+                                    <span style={{ color: 'var(--color-danger)', whiteSpace: 'pre-wrap' }}>{pathMeta.errorMessage}</span>
                                   </div>
                                 )}
                               </div>
