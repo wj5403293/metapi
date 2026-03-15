@@ -550,6 +550,18 @@ function ensureProxyLogBillingDetailsSchema() {
   proxyLogBillingDetailsColumnAvailable = true;
 }
 
+function ensureProxyLogDownstreamApiKeyIdSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'downstream_api_key_id')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN downstream_api_key_id integer;');
+  }
+
+  proxyLogDownstreamApiKeyIdColumnAvailable = true;
+}
+
 function normalizeSchemaErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error && 'message' in error) {
     return String((error as { message?: unknown }).message || '');
@@ -639,7 +651,6 @@ function ensureProxyLogDownstreamApiKeyIdSchema() {
 
   proxyLogDownstreamApiKeyIdColumnAvailable = true;
 }
-
 export async function hasProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {
   if (proxyLogDownstreamApiKeyIdColumnAvailable !== null) {
     return proxyLogDownstreamApiKeyIdColumnAvailable;

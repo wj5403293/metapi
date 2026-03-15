@@ -78,4 +78,17 @@ describe('database schema parity', () => {
 
     expect(duplicatedSpecs).toEqual([]);
   });
+
+  it('keeps proxy_logs downstream api key schema in the generated contract artifacts', () => {
+    const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
+    const mysqlBootstrap = readFileSync(resolve(generatedDir, 'mysql.bootstrap.sql'), 'utf8');
+    const postgresBootstrap = readFileSync(resolve(generatedDir, 'postgres.bootstrap.sql'), 'utf8');
+
+    expect(contract.tables.proxy_logs?.columns.downstream_api_key_id?.logicalType).toBe('integer');
+    expect(contract.indexes.some((index) => index.name === 'proxy_logs_downstream_api_key_created_at_idx')).toBe(true);
+    expect(mysqlBootstrap).toContain('`downstream_api_key_id`');
+    expect(mysqlBootstrap).toContain('`proxy_logs_downstream_api_key_created_at_idx`');
+    expect(postgresBootstrap).toContain('"downstream_api_key_id"');
+    expect(postgresBootstrap).toContain('"proxy_logs_downstream_api_key_created_at_idx"');
+  });
 });
