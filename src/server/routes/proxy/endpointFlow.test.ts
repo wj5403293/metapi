@@ -58,6 +58,24 @@ describe('executeEndpointFlow', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the injected dispatchRequest hook instead of the default fetch path', async () => {
+    const dispatchRequest = vi.fn(async () => toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+      dispatchRequest,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(dispatchRequest).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('avoids duplicated /v1 when base url already ends with /v1', async () => {
     fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
       status: 200,

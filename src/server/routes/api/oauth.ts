@@ -6,6 +6,7 @@ import {
   handleOauthCallback,
   listOauthConnections,
   listOauthProviders,
+  refreshOauthConnectionQuota,
   startOauthProviderFlow,
   startOauthRebindFlow,
   submitOauthManualCallback,
@@ -228,6 +229,22 @@ export async function oauthRoutes(app: FastifyInstance) {
       }
       try {
         return await deleteOauthConnection(accountId);
+      } catch (error: any) {
+        return reply.code(404).send({ message: error?.message || 'oauth account not found' });
+      }
+    },
+  );
+
+  app.post<{ Params: { accountId: string } }>(
+    '/api/oauth/connections/:accountId/quota/refresh',
+    { preHandler: [limitOauthConnectionMutate] },
+    async (request, reply) => {
+      const accountId = parsePositiveInteger(request.params.accountId);
+      if (accountId === null) {
+        return reply.code(400).send({ message: 'invalid account id' });
+      }
+      try {
+        return await refreshOauthConnectionQuota(accountId);
       } catch (error: any) {
         return reply.code(404).send({ message: error?.message || 'oauth account not found' });
       }

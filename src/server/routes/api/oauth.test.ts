@@ -812,6 +812,31 @@ describe('oauth routes', { timeout: 15_000 }, () => {
           accountId: 'chatgpt-account-123',
           email: 'codex-user@example.com',
           planType: 'team',
+          idToken: buildJwt({
+            email: 'codex-user@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'chatgpt-account-123',
+              chatgpt_plan_type: 'team',
+              chatgpt_subscription_active_start: '2026-03-01T00:00:00.000Z',
+              chatgpt_subscription_active_until: '2026-04-01T00:00:00.000Z',
+            },
+          }),
+          quota: {
+            status: 'supported',
+            source: 'reverse_engineered',
+            lastSyncAt: '2026-03-17T08:00:00.000Z',
+            lastLimitResetAt: '2026-03-17T13:00:00.000Z',
+            windows: {
+              fiveHour: {
+                supported: false,
+                message: 'official 5h quota window is not exposed by current codex oauth artifacts',
+              },
+              sevenDay: {
+                supported: false,
+                message: 'official 7d quota window is not exposed by current codex oauth artifacts',
+              },
+            },
+          },
           modelDiscoveryStatus: 'abnormal',
           lastModelSyncAt: '2026-03-17T08:00:00.000Z',
           lastModelSyncError: 'Codex 模型获取失败（HTTP 403: forbidden）',
@@ -853,6 +878,16 @@ describe('oauth routes', { timeout: 15_000 }, () => {
           provider: 'codex',
           email: 'codex-user@example.com',
           status: 'abnormal',
+          quota: expect.objectContaining({
+            status: 'supported',
+            source: 'reverse_engineered',
+            lastLimitResetAt: '2026-03-17T13:00:00.000Z',
+            subscription: expect.objectContaining({
+              planType: 'team',
+              activeStart: '2026-03-01T00:00:00.000Z',
+              activeUntil: '2026-04-01T00:00:00.000Z',
+            }),
+          }),
           routeChannelCount: 1,
           lastModelSyncAt: '2026-03-17T08:00:00.000Z',
           lastModelSyncError: 'Codex 模型获取失败（HTTP 403: forbidden）',
@@ -872,6 +907,96 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toEqual([]);
+  });
+
+  it('refreshes oauth quota snapshots and marks unsupported providers explicitly', async () => {
+    const codexSite = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const antigravitySite = await db.insert(schema.sites).values({
+      name: 'Antigravity OAuth',
+      url: 'https://example.com/antigravity',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    const codexAccount = await db.insert(schema.accounts).values({
+      siteId: codexSite.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-123',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-123',
+          email: 'codex-user@example.com',
+          planType: 'plus',
+          idToken: buildJwt({
+            email: 'codex-user@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'chatgpt-account-123',
+              chatgpt_plan_type: 'plus',
+              chatgpt_subscription_active_start: '2026-03-01T00:00:00.000Z',
+              chatgpt_subscription_active_until: '2026-04-01T00:00:00.000Z',
+            },
+          }),
+        },
+      }),
+    }).returning().get();
+
+    const antigravityAccount = await db.insert(schema.accounts).values({
+      siteId: antigravitySite.id,
+      username: 'ag-user@example.com',
+      accessToken: 'oauth-access-token',
+      status: 'active',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'ag-account-123',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          accountId: 'ag-account-123',
+          email: 'ag-user@example.com',
+          planType: 'pro',
+        },
+      }),
+    }).returning().get();
+
+    const codexRefresh = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/connections/${codexAccount.id}/quota/refresh`,
+    });
+    expect(codexRefresh.statusCode).toBe(200);
+    expect(codexRefresh.json()).toMatchObject({
+      success: true,
+      quota: expect.objectContaining({
+        status: 'supported',
+        subscription: expect.objectContaining({
+          planType: 'plus',
+          activeStart: '2026-03-01T00:00:00.000Z',
+          activeUntil: '2026-04-01T00:00:00.000Z',
+        }),
+      }),
+    });
+
+    const antigravityRefresh = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/connections/${antigravityAccount.id}/quota/refresh`,
+    });
+    expect(antigravityRefresh.statusCode).toBe(200);
+    expect(antigravityRefresh.json()).toMatchObject({
+      success: true,
+      quota: expect.objectContaining({
+        status: 'unsupported',
+        providerMessage: 'current local CLIProxyAPI evidence does not expose official quota windows for antigravity oauth',
+      }),
+    });
   });
 
   it('keeps multiple codex team workspaces with the same email as separate oauth connections', async () => {

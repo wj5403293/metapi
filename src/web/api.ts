@@ -283,6 +283,33 @@ export type OAuthSessionInfo = {
   error?: string;
 };
 
+export type OAuthQuotaWindowInfo = {
+  supported: boolean;
+  limit?: number | null;
+  used?: number | null;
+  remaining?: number | null;
+  resetAt?: string | null;
+  message?: string | null;
+};
+
+export type OAuthQuotaInfo = {
+  status: 'supported' | 'unsupported' | 'error';
+  source: 'official' | 'reverse_engineered';
+  lastSyncAt?: string | null;
+  lastError?: string | null;
+  providerMessage?: string | null;
+  subscription?: {
+    planType?: string | null;
+    activeStart?: string | null;
+    activeUntil?: string | null;
+  } | null;
+  windows: {
+    fiveHour: OAuthQuotaWindowInfo;
+    sevenDay: OAuthQuotaWindowInfo;
+  };
+  lastLimitResetAt?: string | null;
+};
+
 export type OAuthConnectionInfo = {
   accountId: number;
   siteId: number;
@@ -295,6 +322,7 @@ export type OAuthConnectionInfo = {
   modelCount: number;
   modelsPreview: string[];
   status: 'healthy' | 'abnormal';
+  quota?: OAuthQuotaInfo | null;
   routeChannelCount?: number;
   lastModelSyncAt?: string | null;
   lastModelSyncError?: string | null;
@@ -432,6 +460,10 @@ export const api = {
   }) as Promise<{ success: true }>,
   getOAuthConnections: (params?: { limit?: number; offset?: number }) =>
     request(`/api/oauth/connections${buildQueryString(params)}`) as Promise<OAuthConnectionsResponse>,
+  refreshOAuthConnectionQuota: (accountId: number) => request(`/api/oauth/connections/${accountId}/quota/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }) as Promise<{ success: true; quota: OAuthQuotaInfo }>,
   rebindOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}/rebind`, {
     method: 'POST',
     body: JSON.stringify({}),

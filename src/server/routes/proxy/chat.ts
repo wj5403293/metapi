@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
-import { fetch } from 'undici';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
@@ -11,6 +10,7 @@ import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParse
 import { resolveProxyUrlForSite, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
+  buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
 } from './upstreamEndpoint.js';
@@ -20,7 +20,7 @@ import {
   recordDownstreamCostUsage,
 } from './downstreamPolicy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
-import { executeEndpointFlow } from './endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
@@ -36,14 +36,24 @@ import {
   buildOauthProviderHeaders,
 } from '../../services/oauth/service.js';
 import { getOauthInfoFromExtraConfig } from '../../services/oauth/oauthAccount.js';
+import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { collectResponsesFinalPayloadFromSse } from './responsesSseFinal.js';
 import {
   createGeminiCliStreamReader,
   unwrapGeminiCliPayload,
 } from './geminiCliCompat.js';
+import { dispatchRuntimeRequest } from './runtimeExecutor.js';
 
 const MAX_RETRIES = 2;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 export async function chatProxyRoute(app: FastifyInstance) {
   app.post('/v1/chat/completions', async (request: FastifyRequest, reply: FastifyReply) =>
@@ -53,6 +63,8 @@ export async function chatProxyRoute(app: FastifyInstance) {
 export async function claudeMessagesProxyRoute(app: FastifyInstance) {
   app.post('/v1/messages', async (request: FastifyRequest, reply: FastifyReply) =>
     handleChatProxyRequest(request, reply, 'claude'));
+  app.post('/v1/messages/count_tokens', async (request: FastifyRequest, reply: FastifyReply) =>
+    handleClaudeCountTokensRequest(request, reply));
 }
 
 async function handleChatProxyRequest(
@@ -96,6 +108,12 @@ async function handleChatProxyRequest(
     }
   }
   const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(resolvedOpenAiBody);
+  const codexSessionCacheKey = deriveCodexSessionCacheKey({
+    downstreamFormat,
+    body: downstreamFormat === 'claude' ? claudeOriginalBody : request.body,
+    requestedModel,
+    proxyToken: getProxyAuthContext(request)?.token || null,
+  });
   const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
   const logDownstreamApiKeyId = downstreamApiKeyId !== null
     && await hasProxyLogDownstreamApiKeyIdColumn();
@@ -153,29 +171,46 @@ async function handleChatProxyRequest(
       options: { forceNormalizeClaudeBody?: boolean } = {},
     ) => {
       const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
-        const endpointRequest = buildUpstreamEndpointRequest({
-          endpoint,
-          modelName,
-          stream: upstreamStream,
-          tokenValue: selected.tokenValue,
-          oauthProvider: oauth?.provider,
-          oauthProjectId: oauth?.projectId,
-          sitePlatform: selected.site.platform,
-          siteUrl: selected.site.url,
-          openaiBody: resolvedOpenAiBody,
+      const endpointRequest = buildUpstreamEndpointRequest({
+        endpoint,
+        modelName,
+        stream: upstreamStream,
+        tokenValue: selected.tokenValue,
+        oauthProvider: oauth?.provider,
+        oauthProjectId: oauth?.projectId,
+        sitePlatform: selected.site.platform,
+        siteUrl: selected.site.url,
+        openaiBody: resolvedOpenAiBody,
         downstreamFormat,
         claudeOriginalBody,
         forceNormalizeClaudeBody: options.forceNormalizeClaudeBody,
         downstreamHeaders: request.headers as Record<string, unknown>,
         providerHeaders: buildProviderHeaders(),
+        codexSessionCacheKey,
       });
       return {
         endpoint,
         path: endpointRequest.path,
         headers: endpointRequest.headers,
         body: endpointRequest.body as Record<string, unknown>,
+        runtime: endpointRequest.runtime,
       };
     };
+    const dispatchRequest = (
+      compatibilityRequest: BuiltEndpointRequest,
+      targetUrl?: string,
+    ) => (
+      dispatchRuntimeRequest({
+        siteUrl: selected.site.url,
+        targetUrl,
+        request: compatibilityRequest,
+        buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+          method: 'POST',
+          headers: requestForFetch.headers,
+          body: JSON.stringify(requestForFetch.body),
+        }),
+      })
+    );
     const endpointStrategy = downstreamTransformer.compatibility.createEndpointStrategy({
       downstreamFormat,
       endpointCandidates,
@@ -187,14 +222,7 @@ async function handleChatProxyRequest(
         endpoint,
         { forceNormalizeClaudeBody },
       ),
-      dispatchRequest: (compatibilityRequest, targetUrl) => fetch(
-        targetUrl ?? `${selected.site.url}${compatibilityRequest.path}`,
-        withSiteRecordProxyRequestInit(selected.site, {
-          method: 'POST',
-          headers: compatibilityRequest.headers,
-          body: JSON.stringify(compatibilityRequest.body),
-        }),
-      ),
+      dispatchRequest,
     });
     const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
       if (ctx.response.status === 401 && oauth) {
@@ -208,14 +236,7 @@ async function handleChatProxyRequest(
           };
           const refreshedRequest = buildEndpointRequest(ctx.request.endpoint);
           const refreshedTargetUrl = `${selected.site.url}${refreshedRequest.path}`;
-          const refreshedResponse = await fetch(
-            refreshedTargetUrl,
-            withSiteRecordProxyRequestInit(selected.site, {
-              method: 'POST',
-              headers: refreshedRequest.headers,
-              body: JSON.stringify(refreshedRequest.body),
-            }),
-          );
+          const refreshedResponse = await dispatchRequest(refreshedRequest, refreshedTargetUrl);
           if (refreshedResponse.ok) {
             return {
               upstream: refreshedResponse,
@@ -239,6 +260,7 @@ async function handleChatProxyRequest(
           proxyUrl: resolveProxyUrlForSite(selected.site),
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+          dispatchRequest,
           tryRecover,
           shouldDowngrade: endpointStrategy.shouldDowngrade,
           onDowngrade: (ctx) => {
@@ -266,6 +288,7 @@ async function handleChatProxyRequest(
       if (!endpointResult.ok) {
         const status = endpointResult.status || 502;
         const errText = endpointResult.errText || 'unknown error';
+        const rawErrText = endpointResult.rawErrText || errText;
         tokenRouter.recordFailure(selected.channel.id);
         logProxy(
           selected,
@@ -285,6 +308,11 @@ async function handleChatProxyRequest(
           clientContext,
           logDownstreamApiKeyId ? downstreamApiKeyId : null,
         );
+        await recordOauthQuotaResetHint({
+          accountId: selected.account.id,
+          statusCode: status,
+          errorText: rawErrText,
+        });
 
         if (isTokenExpiredError({ status, message: errText })) {
           await reportTokenExpired({
@@ -570,6 +598,251 @@ async function handleChatProxyRequest(
       return reply.code(502).send({
         error: {
           message: `Upstream error: ${err?.message || 'network failure'}`,
+          type: 'upstream_error',
+        },
+      });
+    }
+  }
+}
+
+function deriveCodexSessionCacheKey(input: {
+  downstreamFormat: DownstreamFormat | 'responses';
+  body: unknown;
+  requestedModel: string;
+  proxyToken: string | null;
+}): string | null {
+  if (isRecord(input.body)) {
+    if (input.downstreamFormat === 'claude' && isRecord(input.body.metadata)) {
+      const userId = asTrimmedString(input.body.metadata.user_id);
+      if (userId) return `${input.requestedModel}:claude:${userId}`;
+    }
+    const promptCacheKey = asTrimmedString(input.body.prompt_cache_key);
+    if (promptCacheKey) return `${input.requestedModel}:responses:${promptCacheKey}`;
+  }
+
+  const proxyToken = asTrimmedString(input.proxyToken);
+  if (proxyToken) {
+    return `${input.requestedModel}:proxy:${proxyToken}`;
+  }
+
+  return null;
+}
+
+async function handleClaudeCountTokensRequest(
+  request: FastifyRequest,
+  reply: FastifyReply,
+) {
+  const rawBody = isRecord(request.body) ? { ...request.body } : null;
+  if (!rawBody) {
+    return reply.code(400).send({
+      error: {
+        message: 'Request body must be a JSON object',
+        type: 'invalid_request_error',
+      },
+    });
+  }
+
+  const requestedModel = asTrimmedString(rawBody.model);
+  if (!requestedModel) {
+    return reply.code(400).send({
+      error: {
+        message: 'model is required',
+        type: 'invalid_request_error',
+      },
+    });
+  }
+
+  if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
+  const downstreamPath = '/v1/messages/count_tokens';
+  const clientContext = detectDownstreamClientContext({
+    downstreamPath,
+    headers: request.headers as Record<string, unknown>,
+    body: rawBody,
+  });
+  const downstreamPolicy = getDownstreamRoutingPolicy(request);
+  const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+  const logDownstreamApiKeyId = downstreamApiKeyId !== null
+    && await hasProxyLogDownstreamApiKeyIdColumn();
+  const excludeChannelIds: number[] = [];
+  let retryCount = 0;
+
+  while (retryCount <= MAX_RETRIES) {
+    let selected = retryCount === 0
+      ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
+      : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
+
+    if (!selected && retryCount === 0) {
+      await refreshModelsAndRebuildRoutes();
+      selected = await tokenRouter.selectChannel(requestedModel, downstreamPolicy);
+    }
+
+    if (!selected) {
+      await reportProxyAllFailed({
+        model: requestedModel,
+        reason: 'No available channels after retries',
+      });
+      return reply.code(503).send({
+        error: { message: 'No available channels for this model', type: 'server_error' },
+      });
+    }
+
+    excludeChannelIds.push(selected.channel.id);
+    if (String(selected.site.platform || '').trim().toLowerCase() !== 'claude') {
+      if (retryCount < MAX_RETRIES) {
+        retryCount += 1;
+        continue;
+      }
+      return reply.code(501).send({
+        error: {
+          message: 'Claude count_tokens compatibility is not implemented for this upstream',
+          type: 'invalid_request_error',
+        },
+      });
+    }
+
+    const modelName = selected.actualModel || requestedModel;
+    const oauth = getOauthInfoFromExtraConfig(selected.account.extraConfig);
+    const startTime = Date.now();
+
+    const buildRequest = () => {
+      const upstreamRequest = buildClaudeCountTokensUpstreamRequest({
+        modelName,
+        tokenValue: selected.tokenValue,
+        oauthProvider: oauth?.provider,
+        sitePlatform: selected.site.platform,
+        claudeBody: rawBody,
+        downstreamHeaders: request.headers as Record<string, unknown>,
+      });
+      return {
+        endpoint: 'messages' as const,
+        path: upstreamRequest.path,
+        headers: upstreamRequest.headers,
+        body: upstreamRequest.body,
+        runtime: upstreamRequest.runtime,
+      };
+    };
+
+    try {
+      let upstreamRequest = buildRequest();
+      let upstream = await dispatchRuntimeRequest({
+        siteUrl: selected.site.url,
+        request: upstreamRequest,
+        buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+          method: 'POST',
+          headers: requestForFetch.headers,
+          body: JSON.stringify(requestForFetch.body),
+        }),
+      });
+
+      if (upstream.status === 401 && oauth) {
+        try {
+          const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id);
+          selected.tokenValue = refreshed.accessToken;
+          selected.account = {
+            ...selected.account,
+            accessToken: refreshed.accessToken,
+            extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
+          };
+          upstreamRequest = buildRequest();
+          upstream = await dispatchRuntimeRequest({
+            siteUrl: selected.site.url,
+            request: upstreamRequest,
+            buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+              method: 'POST',
+              headers: requestForFetch.headers,
+              body: JSON.stringify(requestForFetch.body),
+            }),
+          });
+        } catch {
+          // Fall through to the regular upstream error handling below.
+        }
+      }
+
+      const latency = Date.now() - startTime;
+      const contentType = upstream.headers.get('content-type') || 'application/json';
+      const text = await upstream.text();
+      let payload: unknown = text;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
+
+      if (!upstream.ok) {
+        tokenRouter.recordFailure(selected.channel.id);
+        logProxy(
+          selected,
+          requestedModel,
+          'failed',
+          upstream.status,
+          latency,
+          typeof payload === 'string' ? payload : JSON.stringify(payload),
+          retryCount,
+          downstreamPath,
+          0,
+          0,
+          0,
+          0,
+          null,
+          upstreamRequest.path,
+          clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
+        );
+        if (shouldRetryProxyRequest(upstream.status, typeof payload === 'string' ? payload : text) && retryCount < MAX_RETRIES) {
+          retryCount += 1;
+          continue;
+        }
+        return reply.code(upstream.status).type(contentType).send(payload);
+      }
+
+      tokenRouter.recordSuccess(selected.channel.id, latency, 0);
+      recordDownstreamCostUsage(request, 0);
+      logProxy(
+        selected,
+        requestedModel,
+        'success',
+        upstream.status,
+        latency,
+        null,
+        retryCount,
+        downstreamPath,
+        0,
+        0,
+        0,
+        0,
+        null,
+        upstreamRequest.path,
+        clientContext,
+        logDownstreamApiKeyId ? downstreamApiKeyId : null,
+      );
+      return reply.code(upstream.status).type(contentType).send(payload);
+    } catch (error: any) {
+      tokenRouter.recordFailure(selected.channel.id);
+      logProxy(
+        selected,
+        requestedModel,
+        'failed',
+        0,
+        Date.now() - startTime,
+        error?.message || 'network error',
+        retryCount,
+        downstreamPath,
+        0,
+        0,
+        0,
+        0,
+        null,
+        null,
+        clientContext,
+        logDownstreamApiKeyId ? downstreamApiKeyId : null,
+      );
+      if (retryCount < MAX_RETRIES) {
+        retryCount += 1;
+        continue;
+      }
+      return reply.code(502).send({
+        error: {
+          message: `Upstream error: ${error?.message || 'network failure'}`,
           type: 'upstream_error',
         },
       });

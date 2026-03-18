@@ -1,5 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, type OAuthConnectionInfo, type OAuthProviderInfo, type OAuthStartInstructions } from '../api.js';
+import {
+  api,
+  type OAuthConnectionInfo,
+  type OAuthProviderInfo,
+  type OAuthQuotaInfo,
+  type OAuthQuotaWindowInfo,
+  type OAuthStartInstructions,
+} from '../api.js';
 
 const POLL_INTERVAL_MS = 1500;
 const CONNECTION_PAGE_LIMIT = 100;
@@ -55,6 +62,35 @@ function resolveConnectionEmailLabel(connection: OAuthConnectionInfo): string {
   const email = asTrimmedString(connection.email);
   if (!email) return '';
   return email;
+}
+
+function resolveQuotaStatusLabel(status?: OAuthQuotaInfo['status']): string {
+  if (status === 'unsupported') return '不支持';
+  if (status === 'error') return '获取失败';
+  return '支持';
+}
+
+function resolveQuotaSourceLabel(source?: OAuthQuotaInfo['source']): string {
+  return source === 'official' ? '官方' : '本地信号';
+}
+
+function resolveQuotaWindowSummary(window?: OAuthQuotaWindowInfo | null): string {
+  if (!window || !window.supported) return '官方未提供';
+
+  const parts: string[] = [];
+  if (typeof window.remaining === 'number') {
+    parts.push(`剩余 ${window.remaining}`);
+  }
+  if (typeof window.used === 'number' && typeof window.limit === 'number') {
+    parts.push(`已用 ${window.used} / ${window.limit}`);
+  } else if (typeof window.limit === 'number') {
+    parts.push(`总量 ${window.limit}`);
+  }
+  if (window.resetAt) {
+    parts.push(`重置 ${window.resetAt}`);
+  }
+
+  return parts.length > 0 ? parts.join(' · ') : '官方未提供';
 }
 
 function renderCodeBlock(value: string) {
@@ -264,6 +300,20 @@ export default function OAuthManagement() {
     }
   };
 
+  const handleRefreshQuota = async (accountId: number) => {
+    const actionKey = `quota:${accountId}`;
+    setActionLoadingKey(actionKey);
+    try {
+      await api.refreshOAuthConnectionQuota(accountId);
+      setSessionMessage('额度信息已刷新');
+      await loadConnections();
+    } catch (error: any) {
+      setSessionMessage(error?.message || '刷新额度失败');
+    } finally {
+      setActionLoadingKey('');
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-header">
@@ -416,9 +466,11 @@ export default function OAuthManagement() {
         <div style={{ display: 'grid', gap: 12 }}>
           {connections.map((connection) => {
             const rebindActionKey = `start:${connection.provider}:${connection.accountId}`;
+            const refreshQuotaActionKey = `quota:${connection.accountId}`;
             const deleteActionKey = `delete:${connection.accountId}`;
             const primaryTitle = resolveConnectionPrimaryTitle(connection);
             const emailLabel = resolveConnectionEmailLabel(connection);
+            const quota = connection.quota;
             return (
               <div key={connection.accountId} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
@@ -460,8 +512,72 @@ export default function OAuthManagement() {
                         {connection.modelsPreview.join(', ')}
                       </div>
                     )}
+                    {quota && (
+                      <div style={{
+                        marginTop: 12,
+                        paddingTop: 12,
+                        borderTop: '1px dashed var(--color-border)',
+                        display: 'grid',
+                        gap: 6,
+                      }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>额度状态</div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                          {resolveQuotaStatusLabel(quota.status)} · {resolveQuotaSourceLabel(quota.source)}
+                          {quota.lastSyncAt ? ` · 最近刷新: ${quota.lastSyncAt}` : ''}
+                        </div>
+                        {quota.subscription?.planType && (
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                            订阅类型: {quota.subscription.planType}
+                          </div>
+                        )}
+                        {quota.subscription?.activeStart && (
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                            订阅开始: {quota.subscription.activeStart}
+                          </div>
+                        )}
+                        {quota.subscription?.activeUntil && (
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                            订阅到期: {quota.subscription.activeUntil}
+                          </div>
+                        )}
+                        {quota.lastLimitResetAt && (
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                            最近重置提示: {quota.lastLimitResetAt}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                          5 小时窗口: {resolveQuotaWindowSummary(quota.windows?.fiveHour)}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                          7 天窗口: {resolveQuotaWindowSummary(quota.windows?.sevenDay)}
+                        </div>
+                        {quota.providerMessage && (
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                            {quota.providerMessage}
+                          </div>
+                        )}
+                        {quota.lastError && (
+                          <div style={{ fontSize: 12, color: 'var(--color-danger)' }}>
+                            {quota.lastError}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => handleRefreshQuota(connection.accountId)}
+                      disabled={
+                        actionLoadingKey === rebindActionKey
+                        || actionLoadingKey === refreshQuotaActionKey
+                        || actionLoadingKey === deleteActionKey
+                      }
+                    >
+                      {actionLoadingKey === refreshQuotaActionKey ? '刷新中...' : '刷新额度'}
+                    </button>
                     <button
                       type="button"
                       className="btn btn-ghost"
@@ -479,7 +595,11 @@ export default function OAuthManagement() {
                         },
                         connection.accountId,
                       )}
-                      disabled={actionLoadingKey === rebindActionKey || actionLoadingKey === deleteActionKey}
+                      disabled={
+                        actionLoadingKey === rebindActionKey
+                        || actionLoadingKey === refreshQuotaActionKey
+                        || actionLoadingKey === deleteActionKey
+                      }
                     >
                       {actionLoadingKey === rebindActionKey ? '启动中...' : '重新授权'}
                     </button>
@@ -487,7 +607,11 @@ export default function OAuthManagement() {
                       type="button"
                       className="btn btn-ghost"
                       onClick={() => handleDelete(connection.accountId)}
-                      disabled={actionLoadingKey === rebindActionKey || actionLoadingKey === deleteActionKey}
+                      disabled={
+                        actionLoadingKey === rebindActionKey
+                        || actionLoadingKey === refreshQuotaActionKey
+                        || actionLoadingKey === deleteActionKey
+                      }
                     >
                       {actionLoadingKey === deleteActionKey ? '删除中...' : '删除连接'}
                     </button>

@@ -1,5 +1,4 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { fetch } from 'undici';
 import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
@@ -16,11 +15,12 @@ import {
 } from './upstreamEndpoint.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
-import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
+import { executeEndpointFlow, withUpstreamPath, type BuiltEndpointRequest } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
 import { detectDownstreamClientContext, isCodexResponsesSurface, type DownstreamClientContext } from './downstreamClientContext.js';
+import { dispatchRuntimeRequest } from './runtimeExecutor.js';
 import { normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';
 import {
   ProxyInputFileResolutionError,
@@ -31,12 +31,14 @@ import {
   buildOauthProviderHeaders,
 } from '../../services/oauth/service.js';
 import { getOauthInfoFromExtraConfig } from '../../services/oauth/oauthAccount.js';
+import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { collectResponsesFinalPayloadFromSse } from './responsesSseFinal.js';
 import {
   createGeminiCliStreamReader,
   unwrapGeminiCliPayload,
 } from './geminiCliCompat.js';
+import { ensureResponsesWebsocketTransport } from './responsesWebsocket.js';
 
 const MAX_RETRIES = 2;
 
@@ -122,7 +124,28 @@ function carriesResponsesFileUrlInput(value: unknown): boolean {
 
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
 
+function deriveCodexSessionCacheKey(input: {
+  body: Record<string, unknown>;
+  requestedModel: string;
+  proxyToken: string | null;
+}): string | null {
+  const promptCacheKey = typeof input.body.prompt_cache_key === 'string'
+    ? input.body.prompt_cache_key.trim()
+    : '';
+  if (promptCacheKey) {
+    return `${input.requestedModel}:responses:${promptCacheKey}`;
+  }
+
+  const proxyToken = typeof input.proxyToken === 'string' ? input.proxyToken.trim() : '';
+  if (proxyToken) {
+    return `${input.requestedModel}:proxy:${proxyToken}`;
+  }
+
+  return null;
+}
+
 export async function responsesProxyRoute(app: FastifyInstance) {
+  ensureResponsesWebsocketTransport(app);
   const handleResponsesRequest = async (
     request: FastifyRequest,
     reply: FastifyReply,
@@ -248,6 +271,11 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       );
       const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
         const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
+        const codexSessionCacheKey = deriveCodexSessionCacheKey({
+          body: normalizedResponsesBody,
+          requestedModel,
+          proxyToken: getProxyAuthContext(request)?.token || null,
+        });
         const endpointRequest = buildUpstreamEndpointRequest({
           endpoint,
           modelName,
@@ -262,6 +290,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           responsesOriginalBody: normalizedResponsesBody,
           downstreamHeaders: request.headers as Record<string, unknown>,
           providerHeaders: buildProviderHeaders(),
+          codexSessionCacheKey,
         });
         const upstreamPath = (
           isCompactRequest && endpoint === 'responses'
@@ -273,19 +302,25 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           path: upstreamPath,
           headers: endpointRequest.headers,
           body: endpointRequest.body as Record<string, unknown>,
+          runtime: endpointRequest.runtime,
         };
       };
+      const dispatchRequest = (compatibilityRequest: BuiltEndpointRequest, targetUrl?: string) => (
+        dispatchRuntimeRequest({
+          siteUrl: selected.site.url,
+          targetUrl,
+          request: compatibilityRequest,
+          buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+            method: 'POST',
+            headers: requestForFetch.headers,
+            body: JSON.stringify(requestForFetch.body),
+          }),
+        })
+      );
       const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
         isStream: isStream || isCodexSite,
         requiresNativeResponsesFileUrl,
-        dispatchRequest: (compatibilityRequest, targetUrl) => fetch(
-          targetUrl ?? `${selected.site.url}${compatibilityRequest.path}`,
-          withSiteRecordProxyRequestInit(selected.site, {
-            method: 'POST',
-            headers: compatibilityRequest.headers,
-            body: JSON.stringify(compatibilityRequest.body),
-          }),
-        ),
+        dispatchRequest,
       });
       const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
         if (ctx.response.status === 401 && oauth) {
@@ -299,14 +334,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             };
             const refreshedRequest = buildEndpointRequest(ctx.request.endpoint);
             const refreshedTargetUrl = `${selected.site.url}${refreshedRequest.path}`;
-            const refreshedResponse = await fetch(
-              refreshedTargetUrl,
-              withSiteRecordProxyRequestInit(selected.site, {
-                method: 'POST',
-                headers: refreshedRequest.headers,
-                body: JSON.stringify(refreshedRequest.body),
-              }),
-            );
+            const refreshedResponse = await dispatchRequest(refreshedRequest, refreshedTargetUrl);
             if (refreshedResponse.ok) {
               return {
                 upstream: refreshedResponse,
@@ -331,6 +359,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           proxyUrl: resolveProxyUrlForSite(selected.site),
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+          dispatchRequest,
           tryRecover,
           shouldDowngrade: endpointStrategy.shouldDowngrade,
           onDowngrade: (ctx) => {
@@ -358,6 +387,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
         if (!endpointResult.ok) {
           const status = endpointResult.status || 502;
           const errText = endpointResult.errText || 'unknown error';
+          const rawErrText = endpointResult.rawErrText || errText;
           tokenRouter.recordFailure(selected.channel.id);
           logProxy(
             selected,
@@ -377,6 +407,11 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             clientContext,
             logDownstreamApiKeyId ? downstreamApiKeyId : null,
           );
+          await recordOauthQuotaResetHint({
+            accountId: selected.account.id,
+            statusCode: status,
+            errorText: rawErrText,
+          });
 
           if (isTokenExpiredError({ status, message: errText })) {
             await reportTokenExpired({
@@ -578,6 +613,13 @@ export async function responsesProxyRoute(app: FastifyInstance) {
 
   app.post('/v1/responses', async (request: FastifyRequest, reply: FastifyReply) =>
     handleResponsesRequest(request, reply, '/v1/responses'));
+  app.get('/v1/responses', async (_request: FastifyRequest, reply: FastifyReply) =>
+    reply.code(426).send({
+      error: {
+        message: 'WebSocket upgrade required for GET /v1/responses',
+        type: 'invalid_request_error',
+      },
+    }));
   app.post('/v1/responses/compact', async (request: FastifyRequest, reply: FastifyReply) =>
     handleResponsesRequest(request, reply, '/v1/responses/compact'));
 }

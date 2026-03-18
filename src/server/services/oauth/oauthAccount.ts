@@ -1,4 +1,5 @@
 import { schema } from '../../db/index.js';
+import type { OauthQuotaSnapshot } from './quotaTypes.js';
 
 type ParsedOauthInfo = {
   provider?: unknown;
@@ -11,6 +12,7 @@ type ParsedOauthInfo = {
   refreshToken?: unknown;
   idToken?: unknown;
   providerData?: unknown;
+  quota?: unknown;
   modelDiscoveryStatus?: unknown;
   lastModelSyncAt?: unknown;
   lastModelSyncError?: unknown;
@@ -34,6 +36,7 @@ export type OauthInfo = {
   refreshToken?: string;
   idToken?: string;
   providerData?: Record<string, unknown>;
+  quota?: OauthQuotaSnapshot;
   modelDiscoveryStatus?: OauthModelDiscoveryStatus;
   lastModelSyncAt?: string;
   lastModelSyncError?: string;
@@ -88,6 +91,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function asQuotaSnapshot(value: unknown): OauthQuotaSnapshot | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as OauthQuotaSnapshot;
+}
+
 function asModelDiscoveryStatus(value: unknown): OauthModelDiscoveryStatus | undefined {
   if (typeof value !== 'string') return undefined;
   const normalized = value.trim().toLowerCase();
@@ -113,6 +121,7 @@ export function getOauthInfoFromExtraConfig(extraConfig?: string | null): OauthI
     refreshToken: asTrimmedString(parsed.refreshToken),
     idToken: asTrimmedString(parsed.idToken),
     providerData: asRecord(parsed.providerData),
+    quota: asQuotaSnapshot(parsed.quota),
     modelDiscoveryStatus: asModelDiscoveryStatus(parsed.modelDiscoveryStatus),
     lastModelSyncAt: asIsoDateTime(parsed.lastModelSyncAt),
     lastModelSyncError: asTrimmedString(parsed.lastModelSyncError),

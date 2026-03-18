@@ -12,7 +12,7 @@ import { getOauthInfoFromExtraConfig } from '../../services/oauth/oauthAccount.j
 import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { getDownstreamRoutingPolicy } from './downstreamPolicy.js';
-import { executeEndpointFlow } from './endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from './endpointFlow.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import {
   buildUpstreamEndpointRequest,
@@ -28,6 +28,7 @@ import {
   unwrapGeminiCliPayload,
   wrapGeminiCliRequest,
 } from './geminiCliCompat.js';
+import { dispatchRuntimeRequest } from './runtimeExecutor.js';
 
 const MAX_RETRIES = 2;
 const GEMINI_MODEL_PROBES = [
@@ -442,11 +443,36 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               selected.tokenValue,
               query,
             );
-          const upstream = await fetch(targetUrl, {
-            method: 'POST',
-            headers: requestHeaders,
-            body: JSON.stringify(requestBody),
-          });
+          const upstream = isInternalGemini
+            ? await dispatchRuntimeRequest({
+              siteUrl: selected.site.url,
+              targetUrl,
+              request: {
+                endpoint: 'chat',
+                path: upstreamPath,
+                headers: requestHeaders,
+                body: requestBody as Record<string, unknown>,
+                runtime: {
+                  executor: isGeminiCli ? 'gemini-cli' : 'antigravity',
+                  modelName: actualModel,
+                  stream: isStreamAction,
+                  oauthProjectId: oauth?.projectId || null,
+                  action: isCountTokensAction
+                    ? 'countTokens'
+                    : (isStreamAction ? 'streamGenerateContent' : 'generateContent'),
+                },
+              },
+              buildInit: async (requestUrl, requestForFetch) => withSiteProxyRequestInit(requestUrl, {
+                method: 'POST',
+                headers: requestForFetch.headers,
+                body: JSON.stringify(requestForFetch.body),
+              }),
+            })
+            : await fetch(targetUrl, {
+              method: 'POST',
+              headers: requestHeaders,
+              body: JSON.stringify(requestBody),
+            });
           const contentType = upstream.headers.get('content-type') || 'application/json';
           if (!upstream.ok) {
             lastStatus = upstream.status;
@@ -661,8 +687,21 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             path: endpointRequest.path,
             headers: endpointRequest.headers,
             body: endpointRequest.body as Record<string, unknown>,
+            runtime: endpointRequest.runtime,
           };
         };
+        const dispatchRequest = (compatibilityRequest: BuiltEndpointRequest, targetUrl?: string) => (
+          dispatchRuntimeRequest({
+            siteUrl: selected.site.url,
+            targetUrl,
+            request: compatibilityRequest,
+            buildInit: async (requestUrl, requestForFetch) => withSiteProxyRequestInit(requestUrl, {
+              method: 'POST',
+              headers: requestForFetch.headers,
+              body: JSON.stringify(requestForFetch.body),
+            }),
+          })
+        );
         const endpointStrategy = createChatEndpointStrategy({
           downstreamFormat: 'openai',
           endpointCandidates,
@@ -674,19 +713,13 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             endpoint,
             { forceNormalizeClaudeBody },
           ),
-          dispatchRequest: async (compatibilityRequest, targetUrl) => fetch(
-            targetUrl ?? `${selected.site.url}${compatibilityRequest.path}`,
-            await withSiteProxyRequestInit(selected.site.url, {
-              method: 'POST',
-              headers: compatibilityRequest.headers,
-              body: JSON.stringify(compatibilityRequest.body),
-            }),
-          ),
+          dispatchRequest,
         });
         const endpointResult = await executeEndpointFlow({
           siteUrl: selected.site.url,
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+          dispatchRequest,
           tryRecover: endpointStrategy.tryRecover,
           shouldDowngrade: endpointStrategy.shouldDowngrade,
         });

@@ -356,7 +356,14 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
     expect(request.headers.Originator).toBe('codex_cli_rs');
     expect(request.headers['Chatgpt-Account-Id']).toBe('chatgpt-account-123');
+    expect(request.headers.Version).toBe('0.101.0');
+    expect(request.headers.Session_id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(request.headers.Conversation_id).toBe(request.headers.Session_id);
+    expect(request.headers['User-Agent']).toBe('codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464');
+    expect(request.headers.Accept).toBe('text/event-stream');
+    expect(request.headers.Connection).toBe('Keep-Alive');
     expect(request.body.instructions).toBe('');
+    expect(request.body.prompt_cache_key).toBe(request.headers.Session_id);
     expect(request.body.stream).toBe(true);
     expect(request.body.store).toBe(false);
     expect(request.body.parallel_tool_calls).toBe(true);
@@ -366,6 +373,48 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.top_p).toBeUndefined();
     expect(request.body.user).toBeUndefined();
     expect(request.body.service_tier).toBeUndefined();
+  });
+
+  it('reuses a stable codex session id when the same downstream continuity key is provided', () => {
+    const firstRequest = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello codex' }],
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexSessionCacheKey: 'gpt-5.4:user-123',
+    } as any);
+
+    const secondRequest = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello again codex' }],
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexSessionCacheKey: 'gpt-5.4:user-123',
+    } as any);
+
+    expect(firstRequest.headers.Session_id).toBe(secondRequest.headers.Session_id);
+    expect(firstRequest.headers.Conversation_id).toBe(secondRequest.headers.Conversation_id);
+    expect(firstRequest.body.prompt_cache_key).toBe(secondRequest.body.prompt_cache_key);
   });
 
   it('builds gemini-cli native requests with project envelope and bearer headers', () => {
@@ -395,7 +444,7 @@ describe('buildUpstreamEndpointRequest', () => {
 
     expect(request.path).toBe('/v1internal:streamGenerateContent?alt=sse');
     expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
-    expect(request.headers['User-Agent']).toContain('GeminiCLI/');
+    expect(request.headers['User-Agent']).toBe('GeminiCLI/0.31.0/gemini-2.5-pro (win32; x64)');
     expect(request.headers['X-Goog-Api-Client']).toContain('google-genai-sdk/');
     expect(request.body.project).toBe('project-demo');
     expect(request.body.model).toBe('gemini-2.5-pro');
@@ -441,8 +490,9 @@ describe('buildUpstreamEndpointRequest', () => {
 
     expect(request.path).toBe('/v1internal:generateContent');
     expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
-    expect(request.headers['User-Agent']).toContain('google-api-nodejs-client');
-    expect(request.headers['X-Goog-Api-Client']).toContain('google-cloud-sdk');
+    expect(request.headers['User-Agent']).toBe('antigravity/1.19.6 darwin/arm64');
+    expect(request.headers['X-Goog-Api-Client']).toBeUndefined();
+    expect(request.headers['Client-Metadata']).toBeUndefined();
     expect(request.body).toEqual({
       project: 'project-demo',
       model: 'gemini-3-pro-preview',
@@ -461,7 +511,43 @@ describe('buildUpstreamEndpointRequest', () => {
     });
   });
 
-  it('uses bearer auth for claude oauth upstream requests', () => {
+  it('uses claude-code runtime headers for claude oauth upstream requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'claude-opus-4-6',
+      stream: true,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'claude',
+      sitePlatform: 'claude',
+      siteUrl: 'https://api.anthropic.com',
+      openaiBody: {
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'hello claude oauth' }],
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1/messages');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers['x-api-key']).toBeUndefined();
+    expect(request.headers['anthropic-version']).toBe('2023-06-01');
+    expect(request.headers['Anthropic-Dangerous-Direct-Browser-Access']).toBe('true');
+    expect(request.headers['X-App']).toBe('cli');
+    expect(request.headers['X-Stainless-Retry-Count']).toBe('0');
+    expect(request.headers['X-Stainless-Runtime-Version']).toBe('v24.3.0');
+    expect(request.headers['X-Stainless-Package-Version']).toBe('0.74.0');
+    expect(request.headers['X-Stainless-Runtime']).toBe('node');
+    expect(request.headers['X-Stainless-Lang']).toBe('js');
+    expect(request.headers['X-Stainless-Arch']).toBe('x64');
+    expect(request.headers['X-Stainless-Os']).toBe('Windows');
+    expect(request.headers['X-Stainless-Timeout']).toBe('600');
+    expect(request.headers['User-Agent']).toBe('claude-cli/2.1.63 (external, cli)');
+    expect(request.headers.Connection).toBe('keep-alive');
+    expect(request.headers.Accept).toBe('text/event-stream');
+    expect(request.headers['Accept-Encoding']).toBe('identity');
+  });
+
+  it('uses claude-code beta headers and compressed non-stream responses for claude upstream requests', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'messages',
       modelName: 'claude-opus-4-6',
@@ -477,9 +563,11 @@ describe('buildUpstreamEndpointRequest', () => {
       downstreamFormat: 'openai',
     });
 
-    expect(request.path).toBe('/v1/messages');
-    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
-    expect(request.headers['x-api-key']).toBeUndefined();
+    expect(request.headers['anthropic-beta']).toContain('claude-code-20250219');
+    expect(request.headers['anthropic-beta']).toContain('oauth-2025-04-20');
+    expect(request.headers['anthropic-beta']).toContain('context-management-2025-06-27');
+    expect(request.headers.Accept).toBe('application/json');
+    expect(request.headers['Accept-Encoding']).toBe('gzip, deflate, br, zstd');
   });
 
   it('converts system roles to developer in native codex responses bodies', () => {

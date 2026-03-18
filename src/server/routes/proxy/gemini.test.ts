@@ -742,15 +742,21 @@ describe('gemini native proxy routes', () => {
 
     expect(response.statusCode).toBe(200);
     const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(targetUrl).toBe('https://cloudcode-pa.googleapis.com/v1internal:generateContent');
+    expect(targetUrl).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent');
     expect(requestInit.headers).toMatchObject({
       Authorization: 'Bearer antigravity-access-token',
       'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'User-Agent': 'antigravity/1.19.6 darwin/arm64',
     });
-    expect(JSON.parse(String(requestInit.body))).toEqual({
+    const upstreamBody = JSON.parse(String(requestInit.body));
+    expect(upstreamBody).toMatchObject({
       project: 'project-demo',
       model: 'gemini-3-pro-preview',
+      userAgent: 'antigravity',
+      requestType: 'agent',
       request: {
+        sessionId: expect.any(String),
         contents: [
           {
             role: 'user',
@@ -759,6 +765,8 @@ describe('gemini native proxy routes', () => {
         ],
       },
     });
+    expect(upstreamBody.requestId).toMatch(/^agent-[0-9a-f-]{36}$/i);
+    expect(String(upstreamBody.request.sessionId)).toMatch(/^-\d+$/);
     expect(response.json()).toEqual({
       responseId: 'antigravity-response-1',
       modelVersion: 'gemini-3-pro-preview',

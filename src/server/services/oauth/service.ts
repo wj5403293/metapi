@@ -16,6 +16,7 @@ import {
 } from './providers.js';
 import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauthAccount.js';
 import { buildCodexOauthInfo } from './codexAccount.js';
+import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './quota.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
@@ -503,6 +504,7 @@ export async function listOauthConnections(options: {
       projectId: oauth.projectId,
       modelCount: models.length,
       modelsPreview: models.slice(0, 10),
+      quota: buildQuotaSnapshotFromOauthInfo(oauth),
       status,
       routeChannelCount: routeChannelCountByAccount.get(row.accounts.id) || 0,
       lastModelSyncAt: oauth.lastModelSyncAt,
@@ -533,6 +535,11 @@ export async function deleteOauthConnection(accountId: number) {
   await db.delete(schema.accounts).where(eq(schema.accounts.id, accountId)).run();
   await rebuildTokenRoutesFromAvailability();
   return { success: true };
+}
+
+export async function refreshOauthConnectionQuota(accountId: number) {
+  const quota = await refreshOauthQuotaSnapshot(accountId);
+  return { success: true, quota };
 }
 
 export async function startOauthRebindFlow(accountId: number, requestOrigin?: string) {

@@ -15,6 +15,7 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   recoveredFromSelfLog: false,
 }));
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
+const recordOauthQuotaResetHintMock = vi.fn();
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
     run: () => undefined,
@@ -65,6 +66,10 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
   refreshOauthAccessTokenSingleflight: (...args: unknown[]) => refreshOauthAccessTokenSingleflightMock(...args),
 }));
 
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaResetHint: (...args: unknown[]) => recordOauthQuotaResetHintMock(...args),
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -110,6 +115,7 @@ describe('responses proxy codex oauth refresh', () => {
     reportTokenExpiredMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     refreshOauthAccessTokenSingleflightMock.mockReset();
+    recordOauthQuotaResetHintMock.mockReset();
     dbInsertMock.mockClear();
 
     selectChannelMock.mockReturnValue({
@@ -185,6 +191,14 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondOptions.headers.Authorization).toBe('Bearer fresh-access-token');
     expect(secondOptions.headers.Originator || secondOptions.headers.originator).toBe('codex_cli_rs');
     expect(secondOptions.headers['Chatgpt-Account-Id'] || secondOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-123');
+    expect(secondOptions.headers.Version || secondOptions.headers.version).toBe('0.101.0');
+    expect(String(secondOptions.headers.Session_id || secondOptions.headers.session_id || '')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(secondOptions.headers.Conversation_id || secondOptions.headers.conversation_id).toBe(
+      secondOptions.headers.Session_id || secondOptions.headers.session_id,
+    );
+    expect(secondOptions.headers['User-Agent'] || secondOptions.headers['user-agent']).toBe('codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464');
+    expect(secondOptions.headers.Accept || secondOptions.headers.accept).toBe('text/event-stream');
+    expect(secondOptions.headers.Connection || secondOptions.headers.connection).toBe('Keep-Alive');
     expect(response.json()?.output_text).toContain('ok after codex token refresh');
   });
 
@@ -216,6 +230,9 @@ describe('responses proxy codex oauth refresh', () => {
     const [, options] = fetchMock.mock.calls[0] as [string, any];
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.instructions).toBe('');
+    expect(forwardedBody.prompt_cache_key).toBe(
+      options.headers.Session_id || options.headers.session_id,
+    );
     expect(forwardedBody.stream).toBe(true);
     expect(forwardedBody.input).toEqual([
       {
@@ -224,6 +241,41 @@ describe('responses proxy codex oauth refresh', () => {
         content: [{ type: 'input_text', text: 'hello codex' }],
       },
     ]);
+  });
+
+  it('records codex usage_limit_reached reset hints on upstream 429 failures', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        type: 'usage_limit_reached',
+        resets_at: 1773800400,
+        message: 'quota exceeded',
+      },
+    }), {
+      status: 429,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(recordOauthQuotaResetHintMock).toHaveBeenCalledWith({
+      accountId: 33,
+      statusCode: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          resets_at: 1773800400,
+          message: 'quota exceeded',
+        },
+      }),
+    });
   });
 
   it('forces codex upstream responses requests to stream and aggregates the SSE payload for non-stream downstream callers', async () => {

@@ -11,6 +11,7 @@ const { apiMock, openMock, focusMock, confirmMock, promptMock } = vi.hoisted(() 
     startOAuthProvider: vi.fn(),
     getOAuthSession: vi.fn(),
     submitOAuthManualCallback: vi.fn(),
+    refreshOAuthConnectionQuota: vi.fn(),
     rebindOAuthConnection: vi.fn(),
     deleteOAuthConnection: vi.fn(),
   },
@@ -684,6 +685,26 @@ describe('OAuthManagement page', () => {
             modelCount: 11,
             modelsPreview: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'],
             status: 'abnormal',
+            quota: {
+              status: 'supported',
+              source: 'reverse_engineered',
+              subscription: {
+                planType: 'team',
+                activeStart: '2026-03-01T00:00:00.000Z',
+                activeUntil: '2026-04-01T00:00:00.000Z',
+              },
+              lastLimitResetAt: '2026-03-17T13:00:00.000Z',
+              windows: {
+                fiveHour: {
+                  supported: false,
+                  message: 'official 5h quota window is not exposed by current codex oauth artifacts',
+                },
+                sevenDay: {
+                  supported: false,
+                  message: 'official 7d quota window is not exposed by current codex oauth artifacts',
+                },
+              },
+            },
             routeChannelCount: 1,
             lastModelSyncAt: '2026-03-17T08:00:00.000Z',
             lastModelSyncError: 'Codex 模型获取失败（HTTP 403: forbidden）',
@@ -713,6 +734,12 @@ describe('OAuthManagement page', () => {
         expect(text).toContain('异常');
         expect(text).toContain('1 条路由');
         expect(text).toContain('Codex 模型获取失败');
+        expect(text).toContain('额度状态');
+        expect(text).toContain('team');
+        expect(text).toContain('2026-03-01T00:00:00.000Z');
+        expect(text).toContain('2026-04-01T00:00:00.000Z');
+        expect(text).toContain('2026-03-17T13:00:00.000Z');
+        expect(text).toContain('官方未提供');
       });
 
       const deleteButton = root!.root.find((node) => (
@@ -731,6 +758,141 @@ describe('OAuthManagement page', () => {
       expect(confirmMock).toHaveBeenCalled();
       expect(apiMock.deleteOAuthConnection).toHaveBeenCalledWith(7);
       expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('refreshes quota for a connection and reloads the connection list', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'Codex',
+          platform: 'codex',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({
+        items: [
+          {
+            accountId: 7,
+            provider: 'codex',
+            email: 'codex-user@example.com',
+            planType: 'team',
+            modelCount: 11,
+            modelsPreview: ['gpt-5.4'],
+            status: 'healthy',
+            quota: {
+              status: 'supported',
+              source: 'reverse_engineered',
+              windows: {
+                fiveHour: {
+                  supported: false,
+                  message: 'official 5h quota window is not exposed by current codex oauth artifacts',
+                },
+                sevenDay: {
+                  supported: false,
+                  message: 'official 7d quota window is not exposed by current codex oauth artifacts',
+                },
+              },
+            },
+          },
+        ],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            accountId: 7,
+            provider: 'codex',
+            email: 'codex-user@example.com',
+            planType: 'team',
+            modelCount: 11,
+            modelsPreview: ['gpt-5.4'],
+            status: 'healthy',
+            quota: {
+              status: 'supported',
+              source: 'reverse_engineered',
+              lastSyncAt: '2026-03-18T01:00:00.000Z',
+              windows: {
+                fiveHour: {
+                  supported: false,
+                  message: 'official 5h quota window is not exposed by current codex oauth artifacts',
+                },
+                sevenDay: {
+                  supported: false,
+                  message: 'official 7d quota window is not exposed by current codex oauth artifacts',
+                },
+              },
+            },
+          },
+        ],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+    apiMock.refreshOAuthConnectionQuota.mockResolvedValue({
+      success: true,
+      quota: {
+        status: 'supported',
+        source: 'reverse_engineered',
+        lastSyncAt: '2026-03-18T01:00:00.000Z',
+        windows: {
+          fiveHour: {
+            supported: false,
+            message: 'official 5h quota window is not exposed by current codex oauth artifacts',
+          },
+          sevenDay: {
+            supported: false,
+            message: 'official 7d quota window is not exposed by current codex oauth artifacts',
+          },
+        },
+      },
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(collectText(root!.root)).toContain('刷新额度');
+      });
+
+      const refreshButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('刷新额度')
+      ));
+
+      await act(async () => {
+        await refreshButton.props.onClick();
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      expect(apiMock.refreshOAuthConnectionQuota).toHaveBeenCalledWith(7);
+      expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+      expect(collectText(root!.root)).toContain('额度信息已刷新');
+      expect(collectText(root!.root)).toContain('2026-03-18T01:00:00.000Z');
     } finally {
       root?.unmount();
     }
