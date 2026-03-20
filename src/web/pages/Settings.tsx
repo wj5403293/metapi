@@ -22,10 +22,23 @@ const PROXY_TOKEN_PREFIX = 'sk-';
 const ROUTE_BRAND_ICON_PREFIX = 'brand:';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
+const CHECKIN_SCHEDULE_MODE_OPTIONS = [
+  { value: 'cron', label: 'Cron' },
+  { value: 'interval', label: '间隔签到' },
+] as const;
+const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
+  const hour = index + 1;
+  return {
+    value: String(hour),
+    label: `${hour} 小时`,
+  };
+});
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 
 type RuntimeSettings = {
   checkinCron: string;
+  checkinScheduleMode: 'cron' | 'interval';
+  checkinIntervalHours: number;
   balanceRefreshCron: string;
   logCleanupCron: string;
   logCleanupUsageLogsEnabled: boolean;
@@ -187,6 +200,8 @@ export default function Settings() {
   const navigate = useNavigate();
   const [runtime, setRuntime] = useState<RuntimeSettings>({
     checkinCron: '0 8 * * *',
+    checkinScheduleMode: 'cron',
+    checkinIntervalHours: 6,
     balanceRefreshCron: '0 * * * *',
     logCleanupCron: '0 6 * * *',
     logCleanupUsageLogsEnabled: false,
@@ -203,6 +218,7 @@ export default function Settings() {
   const [maskedToken, setMaskedToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [testingCheckin, setTestingCheckin] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
   const [savingProxyFailureRules, setSavingProxyFailureRules] = useState(false);
@@ -397,6 +413,10 @@ export default function Settings() {
       setMaskedToken(authInfo.masked || '****');
       setRuntime({
         checkinCron: runtimeInfo.checkinCron || '0 8 * * *',
+        checkinScheduleMode: runtimeInfo.checkinScheduleMode === 'interval' ? 'interval' : 'cron',
+        checkinIntervalHours: Number(runtimeInfo.checkinIntervalHours) >= 1
+          ? Math.min(24, Math.trunc(Number(runtimeInfo.checkinIntervalHours)))
+          : 6,
         balanceRefreshCron: runtimeInfo.balanceRefreshCron || '0 * * * *',
         logCleanupCron: runtimeInfo.logCleanupCron || '0 6 * * *',
         logCleanupUsageLogsEnabled: !!runtimeInfo.logCleanupUsageLogsEnabled,
@@ -488,6 +508,8 @@ export default function Settings() {
     try {
       await api.updateRuntimeSettings({
         checkinCron: runtime.checkinCron,
+        checkinScheduleMode: runtime.checkinScheduleMode,
+        checkinIntervalHours: runtime.checkinIntervalHours,
         balanceRefreshCron: runtime.balanceRefreshCron,
         logCleanupCron: runtime.logCleanupCron,
         logCleanupUsageLogsEnabled: runtime.logCleanupUsageLogsEnabled,
@@ -499,6 +521,18 @@ export default function Settings() {
       toast.error(err?.message || '保存失败');
     } finally {
       setSavingSchedule(false);
+    }
+  };
+
+  const triggerScheduleCheckin = async () => {
+    setTestingCheckin(true);
+    try {
+      await api.triggerCheckinAll();
+      toast.success('已开始全部签到，请稍后查看签到日志');
+    } catch (err: any) {
+      toast.error(err?.message || '触发签到失败');
+    } finally {
+      setTestingCheckin(false);
     }
   };
 
@@ -953,6 +987,39 @@ export default function Settings() {
 
         <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>定时任务</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '180px 180px auto', gap: 12, alignItems: 'end', marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到方式</div>
+              <ModernSelect
+                value={runtime.checkinScheduleMode}
+                onChange={(value) => setRuntime((prev) => ({
+                  ...prev,
+                  checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
+                }))}
+                options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到间隔</div>
+              <ModernSelect
+                value={String(runtime.checkinIntervalHours)}
+                onChange={(value) => setRuntime((prev) => ({
+                  ...prev,
+                  checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
+                }))}
+                disabled={runtime.checkinScheduleMode !== 'interval'}
+                options={CHECKIN_INTERVAL_OPTIONS}
+              />
+            </div>
+            <button
+              onClick={triggerScheduleCheckin}
+              disabled={testingCheckin}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+            >
+              {testingCheckin ? '触发中...' : '测试一次签到'}
+            </button>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到 Cron</div>
@@ -960,6 +1027,7 @@ export default function Settings() {
                 value={runtime.checkinCron}
                 onChange={(e) => setRuntime((prev) => ({ ...prev, checkinCron: e.target.value }))}
                 style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+                disabled={runtime.checkinScheduleMode !== 'cron'}
               />
             </div>
             <div>

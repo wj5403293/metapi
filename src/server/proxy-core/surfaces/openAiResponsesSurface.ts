@@ -1,6 +1,5 @@
 import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -27,7 +26,6 @@ import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
 import { normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';
 import {
   ProxyInputFileResolutionError,
-  hasNonImageFileInputInOpenAiBody,
   resolveResponsesBodyInputFiles,
 } from '../../services/proxyInputFileResolver.js';
 import {
@@ -47,8 +45,12 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
-import { detectCliProfile } from '../cliProfiles/registry.js';
-import type { CliProfileId } from '../cliProfiles/types.js';
+import {
+  summarizeConversationFileInputsInOpenAiBody,
+  summarizeConversationFileInputsInResponsesBody,
+} from '../capabilities/conversationFileCapabilities.js';
+import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
+import { insertProxyLog } from '../../services/proxyLogStore.js';
 
 const MAX_RETRIES = 2;
 
@@ -134,25 +136,6 @@ function carriesResponsesFileUrlInput(value: unknown): boolean {
 
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
 
-type DownstreamClientContext = {
-  clientKind: CliProfileId;
-  sessionId?: string;
-  traceHint?: string;
-};
-
-function detectDownstreamClientContext(input: {
-  downstreamPath: string;
-  headers?: Record<string, unknown>;
-  body?: unknown;
-}): DownstreamClientContext {
-  const detected = detectCliProfile(input);
-  return {
-    clientKind: detected.id,
-    ...(detected.sessionId ? { sessionId: detected.sessionId } : {}),
-    ...(detected.traceHint ? { traceHint: detected.traceHint } : {}),
-  };
-}
-
 function deriveCodexExplicitSessionId(body: Record<string, unknown>): string | null {
   const promptCacheKey = typeof body.prompt_cache_key === 'string'
     ? body.prompt_cache_key.trim()
@@ -195,8 +178,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
     const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
-    const logDownstreamApiKeyId = downstreamApiKeyId !== null
-      && await hasProxyLogDownstreamApiKeyIdColumn();
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -250,9 +231,12 @@ export async function handleOpenAiResponsesSurfaceRequest(
         isStream,
         { defaultEncryptedReasoningInclude },
       );
-      const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(openAiBody);
+      const conversationFileSummary = summarizeConversationFileInputsInOpenAiBody(openAiBody);
+      const hasNonImageFileInput = conversationFileSummary.hasDocument;
       const prefersNativeResponsesReasoning = wantsNativeResponsesReasoning(normalizedResponsesBody);
-      const requiresNativeResponsesFileUrl = carriesResponsesFileUrlInput(normalizedResponsesBody.input);
+      const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(normalizedResponsesBody);
+      const requiresNativeResponsesFileUrl = responsesConversationFileSummary.hasRemoteDocumentUrl
+        || carriesResponsesFileUrlInput(normalizedResponsesBody.input);
       if (requiresNativeResponsesFileUrl && String(selected.site.platform || '').trim().toLowerCase() === 'claude') {
         return reply.code(400).send({
           error: {
@@ -271,6 +255,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         requestedModel,
         {
           hasNonImageFileInput,
+          conversationFileSummary,
           wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
         },
       );
@@ -416,7 +401,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               null,
               null,
               clientContext,
-              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+              downstreamApiKeyId,
             );
           },
         });
@@ -446,7 +431,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             null,
             null,
             clientContext,
-            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            downstreamApiKeyId,
           );
           await recordOauthQuotaResetHint({
             accountId: selected.account.id,
@@ -528,7 +513,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             usageForLog.promptTokens, usageForLog.completionTokens, usageForLog.totalTokens, estimatedCost, billingDetails,
             successfulUpstreamPath,
             clientContext,
-            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            downstreamApiKeyId,
           );
         } catch (error) {
           console.error('[responses] post-stream success logging failed:', error);
@@ -601,7 +586,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   null,
                   successfulUpstreamPath,
                   clientContext,
-                  logDownstreamApiKeyId ? downstreamApiKeyId : null,
+                  downstreamApiKeyId,
                 );
                 return;
               }
@@ -644,7 +629,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 null,
                 successfulUpstreamPath,
                 clientContext,
-                logDownstreamApiKeyId ? downstreamApiKeyId : null,
+                downstreamApiKeyId,
               );
 
               if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
@@ -683,7 +668,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 null,
                 successfulUpstreamPath,
                 clientContext,
-                logDownstreamApiKeyId ? downstreamApiKeyId : null,
+                downstreamApiKeyId,
               );
               return;
             }
@@ -743,7 +728,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               null,
               successfulUpstreamPath,
               clientContext,
-              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+              downstreamApiKeyId,
             );
             return;
           }
@@ -811,7 +796,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             null,
             successfulUpstreamPath,
             clientContext,
-            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            downstreamApiKeyId,
           );
           if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
             retryCount += 1;
@@ -865,7 +850,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails,
           successfulUpstreamPath,
           clientContext,
-          logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          downstreamApiKeyId,
         );
         return reply.send(downstreamData);
       } catch (err: any) {
@@ -889,7 +874,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           null,
           null,
           clientContext,
-          logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          downstreamApiKeyId,
         );
         if (retryCount < MAX_RETRIES) {
           retryCount += 1;
@@ -936,11 +921,11 @@ async function logProxy(
       upstreamPath,
       errorMessage,
     });
-    await db.insert(schema.proxyLogs).values({
+    await insertProxyLog({
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
       accountId: selected.account.id,
-      ...(downstreamApiKeyId !== null ? { downstreamApiKeyId } : {}),
+      downstreamApiKeyId,
       modelRequested,
       modelActual: selected.actualModel,
       status,
@@ -950,11 +935,15 @@ async function logProxy(
       completionTokens,
       totalTokens,
       estimatedCost,
-      billingDetails: billingDetails ? JSON.stringify(billingDetails) : null,
+      billingDetails,
+      clientFamily: clientContext?.clientKind || null,
+      clientAppId: clientContext?.clientAppId || null,
+      clientAppName: clientContext?.clientAppName || null,
+      clientConfidence: clientContext?.clientConfidence || null,
       errorMessage: normalizedErrorMessage,
       retryCount,
       createdAt,
-    }).run();
+    });
   } catch (error) {
     console.warn('[proxy/responses] failed to write proxy log', error);
   }
