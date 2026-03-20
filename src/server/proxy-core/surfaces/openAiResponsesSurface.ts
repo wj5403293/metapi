@@ -12,6 +12,8 @@ import { resolveProxyUrlForSite, withSiteRecordProxyRequestInit } from '../../se
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import {
   buildUpstreamEndpointRequest,
+  recordUpstreamEndpointFailure,
+  recordUpstreamEndpointSuccess,
   resolveUpstreamEndpointCandidates,
 } from '../../routes/proxy/upstreamEndpoint.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
@@ -278,6 +280,16 @@ export async function handleOpenAiResponsesSurfaceRequest(
       if (endpointCandidates.length === 0) {
         endpointCandidates.push('responses', 'chat', 'messages');
       }
+      const endpointRuntimeContext = {
+        siteId: selected.site.id,
+        modelName,
+        downstreamFormat: 'responses' as const,
+        requestedModelHint: requestedModel,
+        requestCapabilities: {
+          hasNonImageFileInput,
+          wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+        },
+      };
       const buildProviderHeaders = () => (
         buildOauthProviderHeaders({
           extraConfig: typeof selected.account.extraConfig === 'string' ? selected.account.extraConfig : null,
@@ -372,6 +384,20 @@ export async function handleOpenAiResponsesSurfaceRequest(
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
           tryRecover,
+          onAttemptFailure: (ctx) => {
+            recordUpstreamEndpointFailure({
+              ...endpointRuntimeContext,
+              endpoint: ctx.request.endpoint,
+              status: ctx.response.status,
+              errorText: ctx.rawErrText,
+            });
+          },
+          onAttemptSuccess: (ctx) => {
+            recordUpstreamEndpointSuccess({
+              ...endpointRuntimeContext,
+              endpoint: ctx.request.endpoint,
+            });
+          },
           shouldDowngrade: endpointStrategy.shouldDowngrade,
           onDowngrade: (ctx) => {
             logProxy(
@@ -399,7 +425,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
           const status = endpointResult.status || 502;
           const errText = endpointResult.errText || 'unknown error';
           const rawErrText = endpointResult.rawErrText || errText;
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, {
+            status,
+            errorText: rawErrText,
+          });
           logProxy(
             selected,
             requestedModel,
@@ -593,7 +622,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
             const latency = Date.now() - startTime;
             const failure = detectProxyFailure({ rawText, usage: parsedUsage });
             if (failure) {
-              tokenRouter.recordFailure(selected.channel.id);
+              tokenRouter.recordFailure(selected.channel.id, {
+                status: failure.status,
+                errorText: failure.reason,
+              });
               logProxy(
                 selected,
                 requestedModel,
@@ -628,7 +660,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
             startSseResponse();
             const streamResult = streamSession.consumeUpstreamFinalPayload(upstreamData, rawText, reply.raw);
             if (streamResult.status === 'failed') {
-              tokenRouter.recordFailure(selected.channel.id);
+              tokenRouter.recordFailure(selected.channel.id, {
+                status: 502,
+                errorText: streamResult.errorMessage,
+              });
               logProxy(
                 selected,
                 requestedModel,
@@ -684,7 +719,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
           const latency = Date.now() - startTime;
           if (streamResult.status === 'failed') {
-            tokenRouter.recordFailure(selected.channel.id);
+            tokenRouter.recordFailure(selected.channel.id, {
+              status: 502,
+              errorText: streamResult.errorMessage,
+            });
             logProxy(
               selected,
               requestedModel,
@@ -748,7 +786,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
         const parsedUsage = parseProxyUsage(upstreamData);
         const failure = detectProxyFailure({ rawText, usage: parsedUsage });
         if (failure) {
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, {
+            status: failure.status,
+            errorText: failure.reason,
+          });
           logProxy(
             selected,
             requestedModel,
@@ -823,7 +864,9 @@ export async function handleOpenAiResponsesSurfaceRequest(
         );
         return reply.send(downstreamData);
       } catch (err: any) {
-        tokenRouter.recordFailure(selected.channel.id);
+        tokenRouter.recordFailure(selected.channel.id, {
+          errorText: err?.message,
+        });
         logProxy(
           selected,
           requestedModel,

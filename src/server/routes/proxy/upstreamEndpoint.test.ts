@@ -11,6 +11,9 @@ import {
   buildUpstreamEndpointRequest,
   isUnsupportedMediaTypeError,
   isEndpointDowngradeError,
+  recordUpstreamEndpointFailure,
+  recordUpstreamEndpointSuccess,
+  resetUpstreamEndpointRuntimeState,
   resolveUpstreamEndpointCandidates,
 } from './upstreamEndpoint.js';
 
@@ -32,6 +35,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
   beforeEach(() => {
     fetchModelPricingCatalogMock.mockReset();
     fetchModelPricingCatalogMock.mockResolvedValue(null);
+    resetUpstreamEndpointRuntimeState();
   });
 
   it('uses downstream-aligned endpoint priority for unknown platforms', async () => {
@@ -178,6 +182,48 @@ describe('resolveUpstreamEndpointCandidates', () => {
     );
 
     expect(order).toEqual(['responses', 'messages', 'chat']);
+  });
+
+  it('remembers the last successful endpoint per site capability profile', async () => {
+    recordUpstreamEndpointSuccess({
+      siteId: baseContext.site.id,
+      endpoint: 'responses',
+      downstreamFormat: 'openai',
+      modelName: 'gpt-5.3',
+    });
+
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'gpt-5.3',
+      'openai',
+    );
+
+    expect(order).toEqual(['responses', 'chat', 'messages']);
+  });
+
+  it('learns a better endpoint from explicit upstream protocol errors', async () => {
+    recordUpstreamEndpointFailure({
+      siteId: baseContext.site.id,
+      endpoint: 'chat',
+      downstreamFormat: 'openai',
+      modelName: 'gpt-5.3',
+      status: 400,
+      errorText: 'Unsupported legacy protocol: /v1/chat/completions is not supported. Please use /v1/responses.',
+    });
+
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'gpt-5.3',
+      'openai',
+    );
+
+    expect(order).toEqual(['responses', 'messages']);
   });
 
   it('keeps claude models messages-first even when openai platform catalog prefers chat', async () => {
