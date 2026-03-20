@@ -428,6 +428,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           tokenRouter.recordFailure(selected.channel.id, {
             status,
             errorText: rawErrText,
+            modelName,
           });
           logProxy(
             selected,
@@ -520,7 +521,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         }
 
         try {
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, modelName);
           recordDownstreamCostUsage(request, estimatedCost);
           logProxy(
             selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
@@ -583,7 +584,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               );
               const latency = Date.now() - startTime;
               if (streamResult.status === 'failed') {
-                tokenRouter.recordFailure(selected.channel.id);
+                tokenRouter.recordFailure(selected.channel.id, modelName);
                 logProxy(
                   selected,
                   requestedModel,
@@ -625,6 +626,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               tokenRouter.recordFailure(selected.channel.id, {
                 status: failure.status,
                 errorText: failure.reason,
+                modelName,
               });
               logProxy(
                 selected,
@@ -663,6 +665,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               tokenRouter.recordFailure(selected.channel.id, {
                 status: 502,
                 errorText: streamResult.errorMessage,
+                modelName,
               });
               logProxy(
                 selected,
@@ -722,6 +725,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             tokenRouter.recordFailure(selected.channel.id, {
               status: 502,
               errorText: streamResult.errorMessage,
+              modelName,
             });
             logProxy(
               selected,
@@ -789,6 +793,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           tokenRouter.recordFailure(selected.channel.id, {
             status: failure.status,
             errorText: failure.reason,
+            modelName,
           });
           logProxy(
             selected,
@@ -853,7 +858,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           resolvedUsage,
         });
 
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, modelName);
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(
           selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
@@ -866,6 +871,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
       } catch (err: any) {
         tokenRouter.recordFailure(selected.channel.id, {
           errorText: err?.message,
+          modelName,
         });
         logProxy(
           selected,

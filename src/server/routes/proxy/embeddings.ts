@@ -70,7 +70,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
 
         const text = await upstream.text();
         if (!upstream.ok) {
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
           logProxy(selected, requestedModel, 'failed', upstream.status, Date.now() - startTime, text, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
 
           if (isTokenExpiredError({ status: upstream.status, message: text })) {
@@ -121,7 +121,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
           resolvedUsage,
         });
 
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, selected.actualModel);
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(
           selected, requestedModel, 'success', upstream.status, latency, null, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null,
@@ -129,7 +129,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data);
       } catch (err: any) {
-        tokenRouter.recordFailure(selected.channel.id);
+        tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
         logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, err.message, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
         if (retryCount < MAX_RETRIES) {
           retryCount++;

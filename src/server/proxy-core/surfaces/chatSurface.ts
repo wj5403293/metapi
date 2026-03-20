@@ -332,6 +332,7 @@ export async function handleChatSurfaceRequest(
         tokenRouter.recordFailure(selected.channel.id, {
           status,
           errorText: rawErrText,
+          modelName,
         });
         logProxy(
           selected,
@@ -435,7 +436,7 @@ export async function handleChatSurfaceRequest(
             );
             const latency = Date.now() - startTime;
             if (streamResult.status === 'failed') {
-              tokenRouter.recordFailure(selected.channel.id);
+              tokenRouter.recordFailure(selected.channel.id, modelName);
               logProxy(
                 selected,
                 requestedModel,
@@ -474,6 +475,7 @@ export async function handleChatSurfaceRequest(
             tokenRouter.recordFailure(selected.channel.id, {
               status: failure.status,
               errorText: failure.reason,
+              modelName,
             });
             logProxy(
               selected,
@@ -515,6 +517,7 @@ export async function handleChatSurfaceRequest(
             tokenRouter.recordFailure(selected.channel.id, {
               status: 502,
               errorText: streamResult.errorMessage,
+              modelName,
             });
             logProxy(
               selected,
@@ -568,6 +571,7 @@ export async function handleChatSurfaceRequest(
             tokenRouter.recordFailure(selected.channel.id, {
               status: 502,
               errorText: streamResult.errorMessage,
+              modelName,
             });
             logProxy(
               selected,
@@ -621,7 +625,7 @@ export async function handleChatSurfaceRequest(
           resolvedUsage,
         });
 
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, modelName);
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(
           selected,
@@ -675,6 +679,7 @@ export async function handleChatSurfaceRequest(
         tokenRouter.recordFailure(selected.channel.id, {
           status: failure.status,
           errorText: failure.reason,
+          modelName,
         });
         logProxy(
           selected,
@@ -736,7 +741,7 @@ export async function handleChatSurfaceRequest(
         resolvedUsage,
       });
 
-      tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+      tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, modelName);
       recordDownstreamCostUsage(request, estimatedCost);
       logProxy(
         selected,
@@ -761,6 +766,7 @@ export async function handleChatSurfaceRequest(
     } catch (err: any) {
       tokenRouter.recordFailure(selected.channel.id, {
         errorText: err?.message,
+        modelName,
       });
       logProxy(
         selected,
@@ -968,6 +974,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         tokenRouter.recordFailure(selected.channel.id, {
           status: upstream.status,
           errorText: typeof payload === 'string' ? payload : text,
+          modelName,
         });
         logProxy(
           selected,
@@ -994,7 +1001,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         return reply.code(upstream.status).type(contentType).send(payload);
       }
 
-      tokenRouter.recordSuccess(selected.channel.id, latency, 0);
+      tokenRouter.recordSuccess(selected.channel.id, latency, 0, modelName);
       recordDownstreamCostUsage(request, 0);
       logProxy(
         selected,
@@ -1018,6 +1025,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
     } catch (error: any) {
       tokenRouter.recordFailure(selected.channel.id, {
         errorText: error?.message,
+        modelName,
       });
       logProxy(
         selected,

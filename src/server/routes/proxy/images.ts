@@ -69,7 +69,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
         const text = await upstream.text();
         if (!upstream.ok) {
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
           logProxy(selected, requestedModel, 'failed', upstream.status, Date.now() - startTime, text, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
           if (isTokenExpiredError({ status: upstream.status, message: text })) {
             await reportTokenExpired({
@@ -102,12 +102,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           completionTokens: 0,
           totalTokens: 0,
         });
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, selected.actualModel);
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null, estimatedCost);
         return reply.code(upstream.status).send(data);
       } catch (err: any) {
-        tokenRouter.recordFailure(selected.channel.id);
+        tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
         logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, err.message, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
         if (retryCount < MAX_RETRIES) {
           retryCount++;
@@ -191,7 +191,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         const upstream = await fetch(targetUrl, requestInit);
         const text = await upstream.text();
         if (!upstream.ok) {
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
           logProxy(selected, requestedModel, 'failed', upstream.status, Date.now() - startTime, text, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null, 0, '/v1/images/edits');
           if (isTokenExpiredError({ status: upstream.status, message: text })) {
             await reportTokenExpired({
@@ -224,12 +224,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           completionTokens: 0,
           totalTokens: 0,
         });
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, selected.actualModel);
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null, estimatedCost, '/v1/images/edits');
         return reply.code(upstream.status).send(data);
       } catch (err: any) {
-        tokenRouter.recordFailure(selected.channel.id);
+        tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
         logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, err.message, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null, 0, '/v1/images/edits');
         if (retryCount < MAX_RETRIES) {
           retryCount++;

@@ -74,7 +74,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
 
         if (!upstream.ok) {
           const errText = await upstream.text().catch(() => 'unknown error');
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
           logProxy(selected, requestedModel, 'failed', upstream.status, Date.now() - startTime, errText, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
 
           if (isTokenExpiredError({ status: upstream.status, message: errText })) {
@@ -173,7 +173,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             parsedUsage,
             resolvedUsage,
           });
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, selected.actualModel);
           recordDownstreamCostUsage(request, estimatedCost);
           logProxy(
             selected, requestedModel, 'success', 200, latency, null, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null,
@@ -194,7 +194,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
         const failure = detectProxyFailure({ rawText, usage: parsedUsage });
         if (failure) {
           const errText = failure.reason;
-          tokenRouter.recordFailure(selected.channel.id);
+          tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
           logProxy(
             selected,
             requestedModel,
@@ -244,7 +244,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           resolvedUsage,
         });
 
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, selected.actualModel);
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(
           selected, requestedModel, 'success', 200, latency, null, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null,
@@ -252,7 +252,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
         );
         return reply.send(data);
       } catch (err: any) {
-        tokenRouter.recordFailure(selected.channel.id);
+        tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
         logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, err.message, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
         if (retryCount < MAX_RETRIES) {
           retryCount++;

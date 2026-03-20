@@ -26,6 +26,7 @@ describe('TokenRouter selection scoring', () => {
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
+  let flushSiteRuntimeHealthPersistence: TokenRouterModule['flushSiteRuntimeHealthPersistence'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let idSeed = 0;
@@ -50,6 +51,7 @@ describe('TokenRouter selection scoring', () => {
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
+    flushSiteRuntimeHealthPersistence = tokenRouterModule.flushSiteRuntimeHealthPersistence;
     config = configModule.config;
     originalRoutingWeights = { ...config.routingWeights };
     originalRoutingFallbackUnitCost = config.routingFallbackUnitCost;
@@ -61,6 +63,7 @@ describe('TokenRouter selection scoring', () => {
     mockedCatalogRoutingCost.mockReturnValue(null);
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.settings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -594,5 +597,209 @@ describe('TokenRouter selection scoring', () => {
     expect(stableCandidate?.reason || '').toContain('历史健康=');
     expect(stableCandidate?.reason || '').toContain('成功率=90.0%');
     expect(weakCandidate?.reason || '').toContain('成功率=40.0%');
+  });
+
+  it('reloads persisted runtime health after in-memory reset', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await createRoute('gpt-4o-mini');
+
+    const siteA = await createSite('persist-a');
+    const accountA = await createAccount(siteA.id, 'persist-user-a');
+    const tokenA = await createToken(accountA.id, 'persist-token-a');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteB = await createSite('persist-b');
+    const accountB = await createAccount(siteB.id, 'persist-user-b');
+    const tokenB = await createToken(accountB.id, 'persist-token-b');
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    await router.recordFailure(channelA.id, {
+      status: 502,
+      errorText: 'Gateway timeout',
+      modelName: 'gpt-4o-mini',
+    });
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      lastFailAt: null,
+      failCount: 0,
+    }).where(eq(schema.routeChannels.id, channelA.id)).run();
+    await flushSiteRuntimeHealthPersistence();
+
+    const persisted = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'token_router_site_runtime_health_v1'))
+      .get();
+    expect(persisted?.value).toBeTruthy();
+
+    resetSiteRuntimeHealthState();
+    invalidateTokenRouterCache();
+
+    const decision = await new TokenRouter().explainSelection('gpt-4o-mini');
+    const candidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
+    const candidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
+
+    expect(candidateA).toBeTruthy();
+    expect(candidateB).toBeTruthy();
+    expect((candidateA?.probability || 0)).toBeLessThan((candidateB?.probability || 0));
+    expect(candidateA?.reason || '').toContain('运行时健康=');
+  });
+
+  it('penalizes the failed model more than unrelated models on the same site', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const gptRoute = await createRoute('gpt-5.4');
+    const claudeRoute = await createRoute('claude-sonnet-4-6');
+
+    const siteA = await createSite('model-aware-a');
+    const accountA = await createAccount(siteA.id, 'model-aware-user-a');
+    const tokenA = await createToken(accountA.id, 'model-aware-token-a');
+    const gptChannelA = await db.insert(schema.routeChannels).values({
+      routeId: gptRoute.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: claudeRoute.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+
+    const siteB = await createSite('model-aware-b');
+    const accountB = await createAccount(siteB.id, 'model-aware-user-b');
+    const tokenB = await createToken(accountB.id, 'model-aware-token-b');
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: gptRoute.id,
+        accountId: accountB.id,
+        tokenId: tokenB.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: claudeRoute.id,
+        accountId: accountB.id,
+        tokenId: tokenB.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]).run();
+
+    const router = new TokenRouter();
+    await router.recordFailure(gptChannelA.id, {
+      status: 502,
+      errorText: 'Bad gateway',
+      modelName: 'gpt-5.4',
+    });
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      lastFailAt: null,
+      failCount: 0,
+    }).where(eq(schema.routeChannels.id, gptChannelA.id)).run();
+    invalidateTokenRouterCache();
+
+    const gptDecision = await router.explainSelection('gpt-5.4');
+    const claudeDecision = await router.explainSelection('claude-sonnet-4-6');
+    const gptCandidateA = gptDecision.candidates.find((candidate) => candidate.siteName.startsWith('model-aware-a'));
+    const claudeCandidateA = claudeDecision.candidates.find((candidate) => candidate.siteName.startsWith('model-aware-a'));
+
+    expect(gptCandidateA).toBeTruthy();
+    expect(claudeCandidateA).toBeTruthy();
+    expect((gptCandidateA?.probability || 0)).toBeLessThan((claudeCandidateA?.probability || 0));
+    expect(gptCandidateA?.reason || '').toContain('模型=');
+  });
+
+  it('stable_first deterministically chooses the healthiest candidate', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.1',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('stable-first-a');
+    const accountA = await createAccount(siteA.id, 'stable-first-user-a');
+    const tokenA = await createToken(accountA.id, 'stable-first-token-a');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteB = await createSite('stable-first-b');
+    const accountB = await createAccount(siteB.id, 'stable-first-user-b');
+    const tokenB = await createToken(accountB.id, 'stable-first-token-b');
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    await router.recordFailure(channelA.id, {
+      status: 502,
+      errorText: 'Gateway timeout',
+      modelName: 'gpt-5.1',
+    });
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      lastFailAt: null,
+      failCount: 0,
+    }).where(eq(schema.routeChannels.id, channelA.id)).run();
+    invalidateTokenRouterCache();
+
+    const preview = await router.previewSelectedChannel('gpt-5.1');
+    const decision = await router.explainSelection('gpt-5.1');
+
+    expect(preview?.channel.id).toBe(channelB.id);
+    expect(decision.summary.join(' ')).toContain('稳定优先');
+    expect(decision.selectedChannelId).toBe(channelB.id);
   });
 });
