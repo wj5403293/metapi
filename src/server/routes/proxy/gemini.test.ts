@@ -1345,7 +1345,7 @@ describe('gemini native proxy routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, expect.any(Number), 0);
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, expect.any(Number), 0, 'gemini-2.5-flash');
     expect(dbInsertMock).toHaveBeenCalledTimes(1);
     expect(dbInsertValuesMock).toHaveBeenCalledWith(expect.objectContaining({
       routeId: 22,
@@ -2015,6 +2015,6 @@ describe('gemini native proxy routes', () => {
       totalTokens: 17,
       errorMessage: '[downstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent] [upstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent]',
     }));
-    expect(recordSuccessMock).toHaveBeenCalledWith(12, expect.any(Number), 0);
+    expect(recordSuccessMock).toHaveBeenCalledWith(12, expect.any(Number), 0, 'gemini-2.5-flash');
   });
 });

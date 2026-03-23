@@ -16,8 +16,7 @@ import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
-
-const MAX_RETRIES = 2;
+import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 
 export async function imagesProxyRoute(app: FastifyInstance) {
   ensureMultipartBufferParser(app);
@@ -37,7 +36,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       let selected = retryCount === 0
         ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
         : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
@@ -102,7 +101,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
               detail: `HTTP ${upstream.status}`,
             });
           }
-          if (shouldRetryProxyRequest(upstream.status, text) && retryCount < MAX_RETRIES) {
+          if (shouldRetryProxyRequest(upstream.status, text) && canRetryProxyChannel(retryCount)) {
             retryCount++;
             continue;
           }
@@ -148,7 +147,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           downstreamPath,
           clientContext,
         );
-        if (retryCount < MAX_RETRIES) {
+        if (canRetryProxyChannel(retryCount)) {
           retryCount++;
           continue;
         }
@@ -184,7 +183,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       let selected = retryCount === 0
         ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
         : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
@@ -261,7 +260,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
               detail: `HTTP ${upstream.status}`,
             });
           }
-          if (shouldRetryProxyRequest(upstream.status, text) && retryCount < MAX_RETRIES) {
+          if (shouldRetryProxyRequest(upstream.status, text) && canRetryProxyChannel(retryCount)) {
             retryCount++;
             continue;
           }
@@ -307,7 +306,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           downstreamPath,
           clientContext,
         );
-        if (retryCount < MAX_RETRIES) {
+        if (canRetryProxyChannel(retryCount)) {
           retryCount++;
           continue;
         }

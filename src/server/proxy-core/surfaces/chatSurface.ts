@@ -54,8 +54,7 @@ import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
-
-const MAX_RETRIES = 2;
+import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -118,7 +117,7 @@ export async function handleChatSurfaceRequest(
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
 
-  while (retryCount <= MAX_RETRIES) {
+  while (retryCount <= getProxyMaxChannelRetries()) {
     let selected = retryCount === 0
       ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
       : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
@@ -351,7 +350,7 @@ export async function handleChatSurfaceRequest(
           });
         }
 
-        if (shouldRetryProxyRequest(status, errText) && retryCount < MAX_RETRIES) {
+        if (shouldRetryProxyRequest(status, errText) && canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }
@@ -480,7 +479,7 @@ export async function handleChatSurfaceRequest(
               downstreamApiKeyId,
             );
 
-            if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+            if (shouldRetryProxyRequest(failure.status, failure.reason) && canRetryProxyChannel(retryCount)) {
               retryCount += 1;
               continue;
             }
@@ -684,7 +683,7 @@ export async function handleChatSurfaceRequest(
           downstreamApiKeyId,
         );
 
-        if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+        if (shouldRetryProxyRequest(failure.status, failure.reason) && canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }
@@ -771,7 +770,7 @@ export async function handleChatSurfaceRequest(
         downstreamApiKeyId,
       );
 
-      if (retryCount < MAX_RETRIES) {
+      if (canRetryProxyChannel(retryCount)) {
         retryCount += 1;
         continue;
       }
@@ -850,7 +849,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
 
-  while (retryCount <= MAX_RETRIES) {
+  while (retryCount <= getProxyMaxChannelRetries()) {
     let selected = retryCount === 0
       ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
       : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
@@ -882,7 +881,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
       requestedModel,
     );
     if (!endpointCandidates.includes('messages')) {
-      if (retryCount < MAX_RETRIES) {
+      if (canRetryProxyChannel(retryCount)) {
         retryCount += 1;
         continue;
       }
@@ -984,7 +983,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
           clientContext,
           downstreamApiKeyId,
         );
-        if (shouldRetryProxyRequest(upstream.status, typeof payload === 'string' ? payload : text) && retryCount < MAX_RETRIES) {
+        if (shouldRetryProxyRequest(upstream.status, typeof payload === 'string' ? payload : text) && canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }
@@ -1035,7 +1034,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         clientContext,
         downstreamApiKeyId,
       );
-      if (retryCount < MAX_RETRIES) {
+      if (canRetryProxyChannel(retryCount)) {
         retryCount += 1;
         continue;
       }

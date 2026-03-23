@@ -18,8 +18,7 @@ import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
-
-const MAX_RETRIES = 2;
+import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 
 export async function completionsProxyRoute(app: FastifyInstance) {
   app.post('/v1/completions', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -42,7 +41,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       let selected = retryCount === 0
         ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
         : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
@@ -113,7 +112,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             });
           }
 
-          if (shouldRetryProxyRequest(upstream.status, errText) && retryCount < MAX_RETRIES) {
+          if (shouldRetryProxyRequest(upstream.status, errText) && canRetryProxyChannel(retryCount)) {
             retryCount++;
             continue;
           }
@@ -257,7 +256,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             downstreamPath,
           );
 
-          if (shouldRetryProxyRequest(failure.status, errText) && retryCount < MAX_RETRIES) {
+          if (shouldRetryProxyRequest(failure.status, errText) && canRetryProxyChannel(retryCount)) {
             retryCount += 1;
             continue;
           }
@@ -338,7 +337,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           clientContext,
           downstreamPath,
         );
-        if (retryCount < MAX_RETRIES) {
+        if (canRetryProxyChannel(retryCount)) {
           retryCount++;
           continue;
         }

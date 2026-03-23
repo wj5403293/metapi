@@ -17,8 +17,7 @@ import {
   refreshProxyVideoTaskSnapshot,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
-
-const MAX_RETRIES = 2;
+import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
   if (!payload || typeof payload !== 'object') return payload;
@@ -51,7 +50,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       let selected = retryCount === 0
         ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
         : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
@@ -116,7 +115,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
               detail: `HTTP ${upstream.status}`,
             });
           }
-          if (shouldRetryProxyRequest(upstream.status, text) && retryCount < MAX_RETRIES) {
+          if (shouldRetryProxyRequest(upstream.status, text) && canRetryProxyChannel(retryCount)) {
             retryCount += 1;
             continue;
           }
@@ -169,7 +168,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           errorText: error?.message || 'network failure',
           modelName: upstreamModel,
         });
-        if (retryCount < MAX_RETRIES) {
+        if (canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }
