@@ -252,6 +252,18 @@ async function logProxy(
   }
 }
 
+async function recordGeminiChannelSuccessBestEffort(
+  channelId: number,
+  latencyMs: number,
+  modelName: string,
+): Promise<void> {
+  try {
+    await tokenRouter.recordSuccess?.(channelId, latencyMs, 0, modelName);
+  } catch (error) {
+    console.warn('[proxy/gemini] failed to record channel success', error);
+  }
+}
+
 export async function geminiProxyRoute(app: FastifyInstance) {
   const listModels = async (request: FastifyRequest, reply: FastifyReply) => {
     const apiVersion = geminiGenerateContentTransformer.resolveProxyApiVersion(
@@ -573,7 +585,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               : upstreamReader;
             if (!reader) {
               const latency = Date.now() - startTime;
-              await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0, actualModel);
+              await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
               await logProxy(
                 selected,
                 requestedModel,
@@ -623,7 +635,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             }
             const parsedUsage = parseProxyUsage(aggregateState);
             const latency = Date.now() - startTime;
-            await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0, actualModel);
+            await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
               requestedModel,
@@ -659,7 +671,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               );
             parsedUsage = parseProxyUsage(aggregateState);
             const latency = Date.now() - startTime;
-            await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0, actualModel);
+            await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
               requestedModel,
@@ -682,7 +694,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             );
           } catch {
             const latency = Date.now() - startTime;
-            await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0, actualModel);
+            await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
               requestedModel,
@@ -869,7 +881,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           },
         });
         const latency = Date.now() - startTime;
-        await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0, actualModel);
+        await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
         await logProxy(
           selected,
           requestedModel,

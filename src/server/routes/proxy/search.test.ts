@@ -142,6 +142,9 @@ describe('/v1/search route', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/search',
+      headers: {
+        authorization: 'Bearer sk-demo',
+      },
       payload: {
         query: 'axonhub',
       },

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import {
   rankConversationFileEndpoints,
   type ConversationFileInputSummary,
@@ -78,7 +78,22 @@ type ChannelContext = {
 const ENDPOINT_RUNTIME_PREFERRED_TTL_MS = 24 * 60 * 60 * 1000;
 const ENDPOINT_RUNTIME_BLOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_ENDPOINT_RUNTIME_STATES = 512;
+export const MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH = 64;
+export const MODEL_KEY_HASH_SUFFIX_LENGTH = 8;
 const endpointRuntimeStates = new Map<string, EndpointRuntimeState>();
+
+export function boundEndpointRuntimeModelKey(value: string): string {
+  if (value.length <= MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH) {
+    return value;
+  }
+
+  const prefix = value.slice(0, MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH);
+  const hash = createHash('sha256')
+    .update(value)
+    .digest('hex')
+    .slice(0, MODEL_KEY_HASH_SUFFIX_LENGTH);
+  return `${prefix}-${hash}`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -91,9 +106,9 @@ function asTrimmedString(value: unknown): string {
 function normalizeEndpointRuntimeModelKey(...values: Array<unknown>): string {
   for (const value of values) {
     const normalized = asTrimmedString(value).toLowerCase();
-    if (normalized) return normalized;
+    if (normalized) return boundEndpointRuntimeModelKey(normalized);
   }
-  return 'unknown-model';
+  return boundEndpointRuntimeModelKey('unknown-model');
 }
 
 function resolveRequestedModelForPayloadRules(input: {
