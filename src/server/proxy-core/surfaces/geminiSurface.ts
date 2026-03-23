@@ -308,6 +308,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             retryCount += 1;
             continue;
           }
+          return reply.code(lastStatus).type(lastContentType).send(lastText);
         }
 
         try {
@@ -333,6 +334,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           retryCount += 1;
           continue;
         }
+        return reply.code(lastStatus).type(lastContentType).send(lastText);
       }
     }
   };

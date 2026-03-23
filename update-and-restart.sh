@@ -95,12 +95,24 @@ else
 fi
 
 BACKUP_FILE=""
+RESTORE_ON_ERROR=0
+
+restore_if_failed() {
+  if [ "$RESTORE_ON_ERROR" -eq 1 ]; then
+    echo "Update failed after containers were stopped; attempting to restore service..." >&2
+    docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate || true
+  fi
+}
+
+trap restore_if_failed ERR
+
 if [ "$DO_PULL" -eq 1 ]; then
   echo "[2/5] Stopping current containers..."
 else
   echo "[2/4] Stopping current containers..."
 fi
 docker compose "${COMPOSE_ARGS[@]}" down --remove-orphans
+RESTORE_ON_ERROR=1
 
 if [ "$SKIP_BACKUP" -eq 0 ]; then
   mkdir -p "$DATA_DIR"
@@ -125,6 +137,8 @@ else
   echo "[4/4] Rebuilding and starting containers..."
 fi
 docker compose "${COMPOSE_ARGS[@]}" up -d --build --force-recreate
+RESTORE_ON_ERROR=0
+trap - ERR
 
 echo
 echo "Container status:"

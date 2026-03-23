@@ -58,6 +58,17 @@ function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function prioritizeEndpointCandidate(
+  candidates: Array<'chat' | 'messages' | 'responses'>,
+  preferred: 'chat' | 'messages' | 'responses',
+): Array<'chat' | 'messages' | 'responses'> {
+  if (!candidates.includes(preferred)) return candidates;
+  return [
+    preferred,
+    ...candidates.filter((candidate) => candidate !== preferred),
+  ];
+}
+
 export async function handleChatSurfaceRequest(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -142,7 +153,7 @@ export async function handleChatSurfaceRequest(
     const modelName = selected.actualModel || requestedModel;
     const oauth = getOauthInfoFromAccount(selected.account);
     const isCodexSite = String(selected.site.platform || '').trim().toLowerCase() === 'codex';
-    const endpointCandidates = [
+    let endpointCandidates = [
       ...await resolveUpstreamEndpointCandidates(
         {
           site: selected.site,
@@ -157,6 +168,9 @@ export async function handleChatSurfaceRequest(
         },
       ),
     ];
+    if (oauth?.provider === 'codex' && downstreamFormat === 'openai') {
+      endpointCandidates = prioritizeEndpointCandidate(endpointCandidates, 'responses');
+    }
     const endpointRuntimeContext = {
       siteId: selected.site.id,
       modelName,

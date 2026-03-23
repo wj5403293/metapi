@@ -75,11 +75,11 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
 
         const text = await upstream.text();
         if (!upstream.ok) {
-          await tokenRouter.recordFailure(selected.channel.id, {
+          await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
             status: upstream.status,
             errorText: text,
             modelName: upstreamModel,
-          });
+          }));
           logProxy(
             selected,
             requestedModel,
@@ -146,7 +146,9 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
           resolvedUsage,
         });
 
-        await tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel);
+        await recordTokenRouterEventBestEffort('record channel success', () => (
+          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+        ));
         recordDownstreamCostUsage(request, estimatedCost);
         logProxy(
           selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId,
@@ -154,11 +156,11 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data);
       } catch (err: any) {
-        await tokenRouter.recordFailure(selected.channel.id, {
+        await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
           status: 0,
           errorText: err.message,
           modelName: upstreamModel,
-        });
+        }));
         logProxy(
           selected,
           requestedModel,
@@ -224,7 +226,7 @@ async function logProxy(
       accountId: selected.account.id,
       downstreamApiKeyId,
       modelRequested,
-      modelActual: selected.actualModel,
+      modelActual: selected.actualModel || modelRequested,
       status,
       httpStatus,
       latencyMs,
@@ -243,6 +245,17 @@ async function logProxy(
     });
   } catch (error) {
     console.warn('[proxy/embeddings] failed to write proxy log', error);
+  }
+}
+
+async function recordTokenRouterEventBestEffort(
+  label: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    console.warn(`[proxy/embeddings] failed to ${label}`, error);
   }
 }
 

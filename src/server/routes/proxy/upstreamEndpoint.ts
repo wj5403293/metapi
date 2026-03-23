@@ -57,6 +57,7 @@ type EndpointCapabilityProfile = {
 type EndpointRuntimeState = {
   preferredEndpoint: UpstreamEndpoint | null;
   preferredUpdatedAtMs: number;
+  lastTouchedAtMs: number;
   blockedUntilMsByEndpoint: Partial<Record<UpstreamEndpoint, number>>;
 };
 
@@ -76,6 +77,7 @@ type ChannelContext = {
 
 const ENDPOINT_RUNTIME_PREFERRED_TTL_MS = 24 * 60 * 60 * 1000;
 const ENDPOINT_RUNTIME_BLOCK_TTL_MS = 6 * 60 * 60 * 1000;
+const MAX_ENDPOINT_RUNTIME_STATES = 512;
 const endpointRuntimeStates = new Map<string, EndpointRuntimeState>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -563,15 +565,21 @@ function buildEndpointRuntimeStateKey(input: {
 }
 
 function getOrCreateEndpointRuntimeState(key: string, nowMs = Date.now()): EndpointRuntimeState {
+  sweepEndpointRuntimeStates(nowMs);
   const existing = endpointRuntimeStates.get(key);
-  if (existing) return existing;
+  if (existing) {
+    existing.lastTouchedAtMs = nowMs;
+    return existing;
+  }
 
   const initial: EndpointRuntimeState = {
     preferredEndpoint: null,
     preferredUpdatedAtMs: nowMs,
+    lastTouchedAtMs: nowMs,
     blockedUntilMsByEndpoint: {},
   };
   endpointRuntimeStates.set(key, initial);
+  enforceEndpointRuntimeStateLimit();
   return initial;
 }
 
@@ -598,6 +606,7 @@ function applyEndpointRuntimePreference(
 ): UpstreamEndpoint[] {
   const state = endpointRuntimeStates.get(key);
   if (!state || candidates.length <= 1) return candidates;
+  state.lastTouchedAtMs = nowMs;
 
   const blocked = new Set<UpstreamEndpoint>();
   for (const endpoint of candidates) {
@@ -625,6 +634,33 @@ function applyEndpointRuntimePreference(
 
   maybeDeleteEndpointRuntimeState(key, nowMs);
   return next;
+}
+
+function sweepEndpointRuntimeStates(nowMs = Date.now()): void {
+  for (const [key, state] of endpointRuntimeStates.entries()) {
+    const hasActiveBlock = Object.values(state.blockedUntilMsByEndpoint).some((untilMs) => (
+      typeof untilMs === 'number' && untilMs > nowMs
+    ));
+    const preferredFresh = (
+      !!state.preferredEndpoint
+      && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
+    );
+    const recentlyTouched = (state.lastTouchedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs;
+    if (!hasActiveBlock && !preferredFresh && !recentlyTouched) {
+      endpointRuntimeStates.delete(key);
+    }
+  }
+}
+
+function enforceEndpointRuntimeStateLimit(): void {
+  if (endpointRuntimeStates.size <= MAX_ENDPOINT_RUNTIME_STATES) return;
+
+  const entries = [...endpointRuntimeStates.entries()]
+    .sort((left, right) => left[1].lastTouchedAtMs - right[1].lastTouchedAtMs);
+  const overflowCount = endpointRuntimeStates.size - MAX_ENDPOINT_RUNTIME_STATES;
+  for (const [key] of entries.slice(0, overflowCount)) {
+    endpointRuntimeStates.delete(key);
+  }
 }
 
 function inferSuggestedEndpointFromError(errorText?: string | null): UpstreamEndpoint | null {

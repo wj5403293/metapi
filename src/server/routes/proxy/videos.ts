@@ -102,11 +102,11 @@ export async function videosProxyRoute(app: FastifyInstance) {
         const upstream = await fetch(targetUrl, requestInit);
         const text = await upstream.text();
         if (!upstream.ok) {
-          await tokenRouter.recordFailure(selected.channel.id, {
+          await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
             status: upstream.status,
             errorText: text,
             modelName: upstreamModel,
-          });
+          }));
           if (isTokenExpiredError({ status: upstream.status, message: text })) {
             await reportTokenExpired({
               accountId: selected.account.id,
@@ -159,15 +159,17 @@ export async function videosProxyRoute(app: FastifyInstance) {
           completionTokens: 0,
           totalTokens: 0,
         });
-        await tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel);
+        await recordTokenRouterEventBestEffort('record channel success', () => (
+          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+        ));
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
-        await tokenRouter.recordFailure(selected.channel.id, {
+        await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
           status: 0,
           errorText: error?.message || 'network failure',
           modelName: upstreamModel,
-        });
+        }));
         if (canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
@@ -239,4 +241,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
       error: { message: text || 'Upstream delete failed', type: 'upstream_error' },
     });
   });
+}
+
+async function recordTokenRouterEventBestEffort(
+  label: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    console.warn(`[proxy/videos] failed to ${label}`, error);
+  }
 }

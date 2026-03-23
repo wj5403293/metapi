@@ -3,6 +3,7 @@ import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { config } from '../config.js';
 import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
+import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 import {
   normalizeRouteRoutingStrategy,
   type RouteRoutingStrategy,
@@ -133,8 +134,7 @@ const SITE_VALIDATION_FAILURE_PATTERNS: RegExp[] = [
 const SITE_TRANSIENT_FAILURE_PATTERNS: RegExp[] = [
   /bad\s+gateway/i,
   /gateway\s+time-?out/i,
-  /timed?\s*out/i,
-  /timeout/i,
+  ...RETRYABLE_TIMEOUT_PATTERNS,
   /service\s+unavailable/i,
   /temporar(?:y|ily)\s+unavailable/i,
   /cpu\s+overloaded/i,
@@ -564,8 +564,9 @@ async function ensureSiteRuntimeHealthStateLoaded(): Promise<void> {
         await loadSiteRuntimeHealthStateFromSettings();
         siteRuntimeHealthLoaded = true;
       } catch (error) {
+        console.warn('Failed to restore site runtime health state from settings', error);
         siteRuntimeHealthLoadPromise = null;
-        throw error;
+        siteRuntimeHealthLoaded = false;
       }
     })();
   }
