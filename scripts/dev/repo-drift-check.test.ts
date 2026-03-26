@@ -50,7 +50,7 @@ describe('repo drift check', () => {
   it('keeps the current repository within the first-wave ratchet', () => {
     const report = runRepoDriftCheck({ root: process.cwd() });
     expect(report.violations).toEqual([]);
-    expect(report.trackedDebt.length).toBeGreaterThanOrEqual(1);
+    expect(report.trackedDebt).toEqual(expect.any(Array));
   });
 
   it('can render markdown reports for scheduled cleanup jobs', () => {

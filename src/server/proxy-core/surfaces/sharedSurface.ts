@@ -334,7 +334,8 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
     input.ctx.request = refreshedRequest;
     input.ctx.response = refreshedResponse;
     if (input.captureFailureBody !== false) {
-      input.ctx.rawErrText = await readRuntimeResponseText(refreshedResponse).catch(() => 'unknown error');
+      const failureBody = await readRuntimeResponseText(refreshedResponse).catch(() => '');
+      input.ctx.rawErrText = failureBody.trim() || 'unknown error';
     }
   } catch {
     return null;

@@ -1,5 +1,6 @@
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 type ReportFormat = 'text' | 'markdown';
@@ -62,7 +63,10 @@ function walkFiles(root: string, currentDir = root): string[] {
     }
 
     const fullPath = resolve(currentDir, entry);
-    const stat = statSync(fullPath);
+    const stat = lstatSync(fullPath);
+    if (stat.isSymbolicLink()) {
+      continue;
+    }
     if (stat.isDirectory()) {
       files.push(...walkFiles(root, fullPath));
       continue;
@@ -129,7 +133,7 @@ function createRules(): RuleSpec[] {
       description: 'Top-level route pages should not import other top-level route pages',
       fileFilter: (file) => isTopLevelPageFile(file),
       lineMatch: (line, file) => {
-        const match = line.match(/from\s+['"]\.\/([^/'"]+)\.js['"]/);
+        const match = line.match(/from\s+['"]\.\/([^/'"]+?)(?:\.(?:js|ts|tsx|jsx))?['"]/);
         if (!match) return false;
         const importedPage = match[1];
         const currentPage = file.replace(/^src\/web\/pages\//, '').replace(/\.(ts|tsx|js|jsx)$/, '');
@@ -266,18 +270,27 @@ function parseCliOptions(argv: string[]): CliOptions {
     reportOnly: false,
   };
 
+  const readRequiredValue = (flag: string, index: number): string => {
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) {
+      throw new Error(`${flag} requires a value`);
+    }
+    return value;
+  };
+
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--format') {
-      const value = argv[index + 1];
-      if (value === 'text' || value === 'markdown') {
-        options.format = value;
-        index += 1;
+      const value = readRequiredValue(arg, index);
+      if (value !== 'text' && value !== 'markdown') {
+        throw new Error(`--format must be one of: text, markdown`);
       }
+      options.format = value;
+      index += 1;
       continue;
     }
     if (arg === '--output') {
-      options.output = argv[index + 1];
+      options.output = readRequiredValue(arg, index);
       index += 1;
       continue;
     }
@@ -286,7 +299,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       continue;
     }
     if (arg === '--root') {
-      options.root = argv[index + 1];
+      options.root = readRequiredValue(arg, index);
       index += 1;
     }
   }
@@ -301,11 +314,25 @@ function maybeWriteReport(outputPath: string | undefined, contents: string): voi
   writeFileSync(resolved, contents);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const options = parseCliOptions(process.argv.slice(2));
-  const report = runRepoDriftCheck({ root: options.root });
-  const contents = formatRepoDriftReport(report, options.format);
-  maybeWriteReport(options.output, contents);
-  console.log(contents);
-  process.exit(report.violations.length > 0 && !options.reportOnly ? 1 : 0);
+const isMainModule = (() => {
+  try {
+    return process.argv[1] != null && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
+
+if (isMainModule) {
+  try {
+    const options = parseCliOptions(process.argv.slice(2));
+    const report = runRepoDriftCheck({ root: options.root });
+    const contents = formatRepoDriftReport(report, options.format);
+    maybeWriteReport(options.output, contents);
+    console.log(contents);
+    process.exit(report.violations.length > 0 && !options.reportOnly ? 1 : 0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    process.exit(1);
+  }
 }
