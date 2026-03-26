@@ -77,4 +77,12 @@ describe('today income reward service', () => {
     expect(getTodayIncomeValue(extraConfig, day)).toBeCloseTo(10.2, 6);
     expect(getTodayIncomeDelta(extraConfig, day)).toBeCloseTo(2.2, 6);
   });
+
+  it('preserves missing extraConfig when income is invalid', () => {
+    expect(updateTodayIncomeSnapshot(null, Number.NaN)).toBeNull();
+    expect(updateTodayIncomeSnapshot(undefined, -1)).toBeNull();
+    expect(updateTodayIncomeSnapshot('', Number.NaN)).toBeNull();
+    expect(updateTodayIncomeSnapshot('{"demo":true}', Number.NaN)).toBe('{"demo":true}');
+    expect(updateTodayIncomeSnapshot({ demo: true }, Number.NaN)).toBe('{"demo":true}');
+  });
 });

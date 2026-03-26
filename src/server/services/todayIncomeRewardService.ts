@@ -90,10 +90,11 @@ export function updateTodayIncomeSnapshot(
   extraConfig: string | Record<string, unknown> | null | undefined,
   todayIncome: number,
   now = new Date(),
-): string {
+): string | null {
   const income = toNonNegativeNumber(todayIncome);
   if (income == null) {
-    if (typeof extraConfig === 'string' && extraConfig) return extraConfig;
+    if (typeof extraConfig === 'string') return extraConfig || null;
+    if (extraConfig == null) return null;
     return JSON.stringify(parseObject(extraConfig));
   }
 

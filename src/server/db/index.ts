@@ -5,6 +5,10 @@ import { drizzle as drizzleSqliteProxy } from 'drizzle-orm/sqlite-proxy';
 import { drizzle as drizzleMysqlProxy } from 'drizzle-orm/mysql-proxy';
 import { drizzle as drizzlePgProxy } from 'drizzle-orm/pg-proxy';
 import * as schema from './schema.js';
+import {
+  installPostgresJsonTextParsers,
+  resetPostgresJsonTextParsersInstallStateForTests,
+} from './postgresJsonTextParsers.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
@@ -45,15 +49,6 @@ let pgPool: pg.Pool | null = null;
 let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
 let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 let proxyLogClientColumnsAvailable: boolean | null = null;
-let postgresJsonTextParsersInstalled = false;
-
-type PgTypesLike = {
-  builtins: {
-    JSON: number;
-    JSONB: number;
-  };
-  setTypeParser(oid: number, format: 'text', parser: (value: string) => string): void;
-};
 
 function buildMysqlPoolOptions(
   connectionString = config.dbUrl,
@@ -78,18 +73,6 @@ function buildPostgresPoolOptions(
     poolOptions.ssl = { rejectUnauthorized: false };
   }
   return poolOptions;
-}
-
-function installPostgresJsonTextParsers(typesRegistry: PgTypesLike = pg.types as PgTypesLike): void {
-  if (postgresJsonTextParsersInstalled) return;
-  const identity = (value: string) => value;
-  typesRegistry.setTypeParser(typesRegistry.builtins.JSON, 'text', identity);
-  typesRegistry.setTypeParser(typesRegistry.builtins.JSONB, 'text', identity);
-  postgresJsonTextParsersInstalled = true;
-}
-
-function resetPostgresJsonTextParsersInstallStateForTests(): void {
-  postgresJsonTextParsersInstalled = false;
 }
 
 function resolveSqlitePath(): string {
