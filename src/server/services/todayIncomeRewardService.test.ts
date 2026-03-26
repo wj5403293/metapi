@@ -62,4 +62,19 @@ describe('today income reward service', () => {
     });
     expect(preferParsed).toBe(1.5);
   });
+
+  it('reads today income snapshots from parsed extraConfig objects', () => {
+    const day = formatLocalDate(new Date('2026-02-25T08:00:00.000Z'));
+    const extraConfig = {
+      todayIncomeSnapshot: {
+        day,
+        baseline: 8,
+        latest: 10.2,
+        updatedAt: '2026-02-25T12:00:00.000Z',
+      },
+    };
+
+    expect(getTodayIncomeValue(extraConfig, day)).toBeCloseTo(10.2, 6);
+    expect(getTodayIncomeDelta(extraConfig, day)).toBeCloseTo(2.2, 6);
+  });
 });
