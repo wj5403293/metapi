@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,9 @@ describe('oauth site registry', () => {
 
   afterAll(() => {
     delete process.env.DATA_DIR;
+    if (dataDir) {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it('creates missing oauth provider sites without duplicating existing rows', async () => {
