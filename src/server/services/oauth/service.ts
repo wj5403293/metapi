@@ -15,6 +15,7 @@ import {
   listOAuthProviderDefinitions,
   type OAuthProviderDefinition,
 } from './providers.js';
+import { ensureOauthProviderSite } from './oauthSiteRegistry.js';
 import {
   buildOauthInfo,
   buildOauthInfoFromAccount,
@@ -141,30 +142,8 @@ async function getNextAccountSortOrder(): Promise<number> {
   return (row?.maxSortOrder ?? -1) + 1;
 }
 
-async function getNextSiteSortOrder(): Promise<number> {
-  const row = await db.select({
-    maxSortOrder: sql<number>`COALESCE(MAX(${schema.sites.sortOrder}), -1)`,
-  }).from(schema.sites).get();
-  return (row?.maxSortOrder ?? -1) + 1;
-}
-
 async function ensureOauthSite(definition: OAuthProviderDefinition) {
-  const existing = await db.select().from(schema.sites).where(and(
-    eq(schema.sites.platform, definition.site.platform),
-    eq(schema.sites.url, definition.site.url),
-  )).get();
-  if (existing) return existing;
-
-  return db.insert(schema.sites).values({
-    name: definition.site.name,
-    url: definition.site.url,
-    platform: definition.site.platform,
-    status: 'active',
-    useSystemProxy: false,
-    isPinned: false,
-    globalWeight: 1,
-    sortOrder: await getNextSiteSortOrder(),
-  }).returning().get();
+  return ensureOauthProviderSite(definition);
 }
 
 async function findExistingOauthAccount(input: {
