@@ -585,6 +585,44 @@ function maybeDeleteEndpointRuntimeState(key: string, nowMs = Date.now()): void 
   }
 }
 
+export function getUpstreamEndpointRuntimeStateSnapshot(input: {
+  siteId: number;
+  downstreamFormat: EndpointPreference;
+  modelName?: string;
+  requestedModelHint?: string;
+  requestCapabilities?: {
+    hasNonImageFileInput?: boolean;
+    conversationFileSummary?: ConversationFileInputSummary;
+    wantsNativeResponsesReasoning?: boolean;
+  };
+}) {
+  const capabilityProfile = buildEndpointCapabilityProfile({
+    modelName: input.modelName,
+    requestedModelHint: input.requestedModelHint,
+    requestCapabilities: input.requestCapabilities,
+  });
+  const enabled = shouldUseEndpointRuntimeMemory(capabilityProfile);
+  const stateKey = buildEndpointRuntimeStateKey({
+    siteId: input.siteId,
+    downstreamFormat: input.downstreamFormat,
+    capabilityProfile,
+  });
+  const nowMs = Date.now();
+  const state = endpointRuntimeStates.get(stateKey);
+
+  return {
+    enabled,
+    stateKey,
+    preferredEndpoint: state?.preferredEndpoint || null,
+    blockedEndpoints: enabled
+      ? (['chat', 'messages', 'responses'] as UpstreamEndpoint[]).filter((endpoint) => {
+        const untilMs = state?.blockedUntilMsByEndpoint[endpoint];
+        return typeof untilMs === 'number' && untilMs > nowMs;
+      })
+      : [],
+  };
+}
+
 function applyEndpointRuntimePreference(
   candidates: UpstreamEndpoint[],
   key: string,
