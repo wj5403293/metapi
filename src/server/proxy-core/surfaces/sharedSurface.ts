@@ -163,7 +163,7 @@ export function buildSurfaceStickySessionKey(input: {
 
 export function getSurfaceStickyPreferredChannelId(stickySessionKey?: string | null): number | null {
   if (!stickySessionKey) return null;
-  return proxyChannelCoordinator.getStickyChannelId(stickySessionKey) || null;
+  return proxyChannelCoordinator.getStickyChannelId(stickySessionKey) ?? null;
 }
 
 export function bindSurfaceStickyChannel(input: {

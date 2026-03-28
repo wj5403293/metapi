@@ -7,11 +7,13 @@ import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
+  resolveUpstreamEndpointCandidates,
+} from '../../routes/proxy/upstreamEndpoint.js';
+import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
-  resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntimeMemory.js';
 import {
   ensureModelAllowedForDownstreamKey,
   getDownstreamRoutingPolicy,

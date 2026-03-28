@@ -1,4 +1,4 @@
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
@@ -359,7 +359,7 @@ export async function getProxyDebugTraceDetail(traceId: number) {
 
   const attempts = await db.select().from(schema.proxyDebugAttempts)
     .where(eq(schema.proxyDebugAttempts.traceId, traceId))
-    .orderBy(schema.proxyDebugAttempts.attemptIndex, schema.proxyDebugAttempts.id)
+    .orderBy(asc(schema.proxyDebugAttempts.attemptIndex), asc(schema.proxyDebugAttempts.id))
     .all();
 
   return {

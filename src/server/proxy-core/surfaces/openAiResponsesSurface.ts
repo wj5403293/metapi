@@ -5,11 +5,13 @@ import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParse
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import {
   buildUpstreamEndpointRequest,
+  resolveUpstreamEndpointCandidates,
+} from '../../routes/proxy/upstreamEndpoint.js';
+import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
-  resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntimeMemory.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
 import { detectProxyFailure } from '../../routes/proxy/proxyFailureJudge.js';

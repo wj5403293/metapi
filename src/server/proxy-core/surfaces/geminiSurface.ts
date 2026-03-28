@@ -17,11 +17,13 @@ import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/pro
 import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import {
   buildUpstreamEndpointRequest,
+  resolveUpstreamEndpointCandidates,
+} from '../../routes/proxy/upstreamEndpoint.js';
+import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
-  resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntimeMemory.js';
 import {
   geminiGenerateContentTransformer,
 } from '../../transformers/gemini/generate-content/index.js';

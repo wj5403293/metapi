@@ -163,7 +163,7 @@ describe('settings and auth events', () => {
         proxyDebugTraceEnabled: true,
         proxyDebugCaptureHeaders: true,
         proxyDebugCaptureBodies: true,
-        proxyDebugCaptureStreamChunks: false,
+        proxyDebugCaptureStreamChunks: true,
         proxyDebugTargetSessionId: 'sess-debug-1',
         proxyDebugTargetClientKind: 'codex',
         proxyDebugTargetModel: 'gpt-4o',
@@ -188,7 +188,7 @@ describe('settings and auth events', () => {
       proxyDebugTraceEnabled: true,
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: true,
-      proxyDebugCaptureStreamChunks: false,
+      proxyDebugCaptureStreamChunks: true,
       proxyDebugTargetSessionId: 'sess-debug-1',
       proxyDebugTargetClientKind: 'codex',
       proxyDebugTargetModel: 'gpt-4o',
@@ -199,6 +199,7 @@ describe('settings and auth events', () => {
     const savedEnabled = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_trace_enabled')).get();
     const savedHeaders = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_headers')).get();
     const savedBodies = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_bodies')).get();
+    const savedStreamChunks = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_stream_chunks')).get();
     const savedTargetSessionId = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_session_id')).get();
     const savedTargetClientKind = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_client_kind')).get();
     const savedTargetModel = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_model')).get();
@@ -207,6 +208,7 @@ describe('settings and auth events', () => {
     expect(savedEnabled?.value).toBe(JSON.stringify(true));
     expect(savedHeaders?.value).toBe(JSON.stringify(true));
     expect(savedBodies?.value).toBe(JSON.stringify(true));
+    expect(savedStreamChunks?.value).toBe(JSON.stringify(true));
     expect(savedTargetSessionId?.value).toBe(JSON.stringify('sess-debug-1'));
     expect(savedTargetClientKind?.value).toBe(JSON.stringify('codex'));
     expect(savedTargetModel?.value).toBe(JSON.stringify('gpt-4o'));

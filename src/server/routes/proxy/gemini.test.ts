@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetUpstreamEndpointRuntimeState } from './upstreamEndpoint.js';
+import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
 const fetchModelPricingCatalogMock = vi.fn();
