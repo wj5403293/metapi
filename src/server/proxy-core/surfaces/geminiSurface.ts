@@ -44,6 +44,7 @@ import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
   parseSurfaceProxyDebugTextPayload,
+  reserveSurfaceProxyDebugAttemptBase,
   safeFinalizeSurfaceProxyDebugTrace,
   safeInsertSurfaceProxyDebugAttempt,
   safeUpdateSurfaceProxyDebugAttempt,
@@ -1083,6 +1084,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           ),
           dispatchRequest,
         });
+        const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
         const endpointResult = await executeEndpointFlow({
           siteUrl: selected.site.url,
           endpointCandidates,
@@ -1097,7 +1099,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               errorText: ctx.rawErrText,
             });
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: ctx.endpointIndex,
+              attemptIndex: debugAttemptBase + ctx.endpointIndex,
               endpoint: ctx.request.endpoint,
               requestPath: ctx.request.path,
               targetUrl: ctx.targetUrl,
@@ -1124,7 +1126,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             });
             const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: ctx.endpointIndex,
+              attemptIndex: debugAttemptBase + ctx.endpointIndex,
               endpoint: ctx.request.endpoint,
               requestPath: ctx.request.path,
               targetUrl: ctx.targetUrl,
@@ -1146,7 +1148,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           },
           shouldDowngrade: endpointStrategy.shouldDowngrade,
           onDowngrade: async (ctx) => {
-            await safeUpdateSurfaceProxyDebugAttempt(debugTrace, ctx.endpointIndex, {
+            await safeUpdateSurfaceProxyDebugAttempt(debugTrace, debugAttemptBase + ctx.endpointIndex, {
               downgradeDecision: true,
               downgradeReason: ctx.errText,
               rawErrorText: ctx.rawErrText,

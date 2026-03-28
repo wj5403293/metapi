@@ -119,6 +119,7 @@ vi.mock('../../services/proxyDebugTraceRuntime.js', () => ({
   safeInsertSurfaceProxyDebugAttempt: (...args: unknown[]) => safeInsertSurfaceProxyDebugAttemptMock(...args),
   safeFinalizeSurfaceProxyDebugTrace: (...args: unknown[]) => safeFinalizeSurfaceProxyDebugTraceMock(...args),
   safeUpdateSurfaceProxyDebugAttempt: vi.fn(),
+  reserveSurfaceProxyDebugAttemptBase: () => 0,
   buildSurfaceProxyDebugResponseHeaders: () => ({}),
   captureSurfaceProxyDebugSuccessResponseBody: async () => null,
   parseSurfaceProxyDebugTextPayload: (raw: string) => raw,

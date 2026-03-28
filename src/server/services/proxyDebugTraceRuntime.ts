@@ -13,6 +13,10 @@ import {
   type ProxyDebugTraceSession,
 } from './proxyDebugTraceStore.js';
 
+type MutableProxyDebugTraceSession = ProxyDebugTraceSession & {
+  nextAttemptIndex?: number;
+};
+
 function parseDebugTextPayload(rawText: string): unknown {
   if (!rawText) return null;
   try {
@@ -82,6 +86,21 @@ export async function safeInsertSurfaceProxyDebugAttempt(
   } catch (error) {
     console.warn('[proxy-debug] failed to insert attempt', error);
   }
+}
+
+export function reserveSurfaceProxyDebugAttemptBase(
+  session: ProxyDebugTraceSession | null,
+  span: number,
+): number {
+  if (!session) return 0;
+
+  const mutableSession = session as MutableProxyDebugTraceSession;
+  const base = mutableSession.nextAttemptIndex ?? 0;
+  const normalizedSpan = Number.isFinite(span)
+    ? Math.max(1, Math.trunc(span))
+    : 1;
+  mutableSession.nextAttemptIndex = base + normalizedSpan;
+  return base;
 }
 
 export async function safeFinalizeSurfaceProxyDebugTrace(
