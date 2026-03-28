@@ -136,11 +136,19 @@ export async function captureSurfaceProxyDebugSuccessResponseBody(
 }
 
 export function buildSurfaceProxyDebugResponseHeaders(
-  response: Response | Headers | Record<string, unknown> | null | undefined,
+  response:
+    | Headers
+    | Record<string, unknown>
+    | { headers?: Headers | Record<string, unknown> | null | undefined }
+    | null
+    | undefined,
 ): Record<string, unknown> | null {
   if (!response) return null;
-  if (typeof Response !== 'undefined' && response instanceof Response) {
-    return normalizeProxyDebugResponseHeaders(response.headers);
+  if (typeof response === 'object' && 'headers' in response) {
+    const responseHeaders = (response as {
+      headers?: Headers | Record<string, unknown> | null | undefined;
+    }).headers;
+    return normalizeProxyDebugResponseHeaders(responseHeaders ?? null);
   }
   return normalizeProxyDebugResponseHeaders(response);
 }
