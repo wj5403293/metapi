@@ -28,6 +28,7 @@ import {
   type OauthExtraConfigInput,
   type OauthIdentityCarrierLike,
 } from './codexAccount.js';
+import { resolveOauthAccountProxyUrl, resolveOauthProviderProxyUrl } from './requestProxy.js';
 import { ensureOauthIdentityBackfill } from './oauthIdentityBackfill.js';
 import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './quota.js';
 
@@ -375,12 +376,14 @@ export async function handleOauthCallback(input: {
   }
 
   try {
+    const proxyUrl = await resolveOauthProviderProxyUrl(input.provider);
     const exchange = await definition.exchangeAuthorizationCode({
       code,
       state: input.state,
       redirectUri: session.redirectUri,
       codeVerifier: session.codeVerifier,
       projectId: session.projectId,
+      proxyUrl,
     });
     const { account, site, created, previousAccount } = await upsertOauthAccount({
       definition,
@@ -655,6 +658,7 @@ export async function refreshOauthAccessToken(accountId: number) {
       projectId: oauth.projectId,
       providerData: oauth.providerData,
     },
+    proxyUrl: await resolveOauthAccountProxyUrl(account.siteId),
   });
   const nextOauth = buildOauthInfoFromAccount(account, {
     provider: oauth.provider,
