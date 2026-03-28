@@ -8,6 +8,22 @@ import {
 
 export type UpstreamEndpointRuntimeEndpoint = 'chat' | 'messages' | 'responses';
 export type UpstreamEndpointRuntimePreference = DownstreamFormat | 'responses';
+export type UpstreamEndpointRuntimeMemoryWrite =
+  | {
+    action: 'success';
+    endpoint: UpstreamEndpointRuntimeEndpoint;
+    preferredEndpoint: UpstreamEndpointRuntimeEndpoint;
+    stateKey: string;
+    timestampMs: number;
+  }
+  | {
+    action: 'failure';
+    endpoint: UpstreamEndpointRuntimeEndpoint;
+    blockedEndpoint: UpstreamEndpointRuntimeEndpoint;
+    preferredEndpoint: UpstreamEndpointRuntimeEndpoint | null;
+    stateKey: string;
+    timestampMs: number;
+  };
 
 export type EndpointCapabilityProfile = {
   modelKey: string;
@@ -334,14 +350,14 @@ export function recordUpstreamEndpointSuccess(input: {
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
   };
-}): void {
+}): UpstreamEndpointRuntimeMemoryWrite | null {
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,
     requestCapabilities: input.requestCapabilities,
   });
-  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
-  if (!shouldRememberSuccessfulEndpoint(input)) return;
+  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return null;
+  if (!shouldRememberSuccessfulEndpoint(input)) return null;
 
   const nowMs = Date.now();
   const key = buildEndpointRuntimeStateKey({
@@ -353,6 +369,13 @@ export function recordUpstreamEndpointSuccess(input: {
   state.preferredEndpoint = input.endpoint;
   state.preferredUpdatedAtMs = nowMs;
   delete state.blockedUntilMsByEndpoint[input.endpoint];
+  return {
+    action: 'success',
+    endpoint: input.endpoint,
+    preferredEndpoint: input.endpoint,
+    stateKey: key,
+    timestampMs: nowMs,
+  };
 }
 
 export function recordUpstreamEndpointFailure(input: {
@@ -368,14 +391,14 @@ export function recordUpstreamEndpointFailure(input: {
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
   };
-}): void {
+}): UpstreamEndpointRuntimeMemoryWrite | null {
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,
     requestCapabilities: input.requestCapabilities,
   });
-  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
-  if (!shouldBlockEndpointByError(input.status, input.errorText)) return;
+  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return null;
+  if (!shouldBlockEndpointByError(input.status, input.errorText)) return null;
 
   const nowMs = Date.now();
   const key = buildEndpointRuntimeStateKey({
@@ -392,4 +415,16 @@ export function recordUpstreamEndpointFailure(input: {
     state.preferredUpdatedAtMs = nowMs;
     delete state.blockedUntilMsByEndpoint[suggestedEndpoint];
   }
+  return {
+    action: 'failure',
+    endpoint: input.endpoint,
+    blockedEndpoint: input.endpoint,
+    preferredEndpoint: (
+      suggestedEndpoint && suggestedEndpoint !== input.endpoint
+        ? suggestedEndpoint
+        : null
+    ),
+    stateKey: key,
+    timestampMs: nowMs,
+  };
 }

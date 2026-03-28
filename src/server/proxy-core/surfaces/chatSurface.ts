@@ -388,7 +388,7 @@ export async function handleChatSurfaceRequest(
           dispatchRequest,
           tryRecover,
           onAttemptFailure: async (ctx) => {
-            recordUpstreamEndpointFailure({
+            const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
               status: ctx.response.status,
@@ -409,14 +409,11 @@ export async function handleChatSurfaceRequest(
               recoverApplied: ctx.recoverApplied === true,
               downgradeDecision: false,
               downgradeReason: null,
-              memoryWrite: {
-                action: 'failure',
-                blockedEndpoint: ctx.request.endpoint,
-              },
+              memoryWrite,
             });
           },
           onAttemptSuccess: async (ctx) => {
-            recordUpstreamEndpointSuccess({
+            const memoryWrite = recordUpstreamEndpointSuccess({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
             });
@@ -436,10 +433,7 @@ export async function handleChatSurfaceRequest(
               recoverApplied: ctx.recoverApplied === true,
               downgradeDecision: false,
               downgradeReason: null,
-              memoryWrite: {
-                action: 'success',
-                preferredEndpoint: ctx.request.endpoint,
-              },
+              memoryWrite,
             });
           },
           shouldDowngrade: endpointStrategy.shouldDowngrade,
@@ -1131,6 +1125,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         accountExtraConfig: selected.account.extraConfig,
       });
       let upstream = await dispatchRequest(upstreamRequest);
+      let recoverApplied = false;
 
       if ((upstream.status === 401 || upstream.status === 403) && oauth) {
         const recoverContext = {
@@ -1149,6 +1144,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         if (recovered?.upstream?.ok) {
           upstreamRequest = buildRequest();
           upstream = recovered.upstream;
+          recoverApplied = true;
         } else {
           upstreamRequest = recoverContext.request;
           upstream = recoverContext.response;
@@ -1176,12 +1172,10 @@ export async function handleClaudeCountTokensSurfaceRequest(
         responseHeaders: buildSurfaceProxyDebugResponseHeaders(upstream),
         responseBody: payload,
         rawErrorText: upstream.ok ? null : text,
-        recoverApplied: false,
+        recoverApplied,
         downgradeDecision: false,
         downgradeReason: null,
-        memoryWrite: upstream.ok
-          ? { action: 'success', preferredEndpoint: upstreamRequest.endpoint }
-          : { action: 'failure', blockedEndpoint: upstreamRequest.endpoint },
+        memoryWrite: null,
       });
 
       if (!upstream.ok) {

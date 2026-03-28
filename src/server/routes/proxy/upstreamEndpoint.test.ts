@@ -443,12 +443,13 @@ describe('resolveUpstreamEndpointCandidates', () => {
   });
 
   it('does not remember messages fallback success for generic /v1/responses requests', async () => {
-    recordUpstreamEndpointSuccess({
+    const memoryWrite = recordUpstreamEndpointSuccess({
       siteId: baseContext.site.id,
       endpoint: 'messages',
       downstreamFormat: 'responses',
       modelName: 'gpt-5.3',
     });
+    expect(memoryWrite).toBeNull();
 
     const order = await resolveUpstreamEndpointCandidates(
       {
@@ -462,8 +463,23 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(order).toEqual(['responses', 'chat', 'messages']);
   });
 
+  it('returns the applied success write when runtime memory stores a preferred endpoint', () => {
+    const memoryWrite = recordUpstreamEndpointSuccess({
+      siteId: baseContext.site.id,
+      endpoint: 'responses',
+      downstreamFormat: 'responses',
+      modelName: 'gpt-5.3',
+    });
+
+    expect(memoryWrite).toMatchObject({
+      action: 'success',
+      endpoint: 'responses',
+      preferredEndpoint: 'responses',
+    });
+  });
+
   it('does not block generic /v1/responses endpoints on transient upstream errors', async () => {
-    recordUpstreamEndpointFailure({
+    const memoryWrite = recordUpstreamEndpointFailure({
       siteId: baseContext.site.id,
       endpoint: 'responses',
       downstreamFormat: 'responses',
@@ -471,6 +487,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       status: 504,
       errorText: '{"error":{"message":"Gateway time-out","type":"upstream_error"}}',
     });
+    expect(memoryWrite).toBeNull();
 
     const order = await resolveUpstreamEndpointCandidates(
       {
@@ -485,13 +502,19 @@ describe('resolveUpstreamEndpointCandidates', () => {
   });
 
   it('learns a better endpoint from explicit upstream protocol errors', async () => {
-    recordUpstreamEndpointFailure({
+    const memoryWrite = recordUpstreamEndpointFailure({
       siteId: baseContext.site.id,
       endpoint: 'chat',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
       status: 400,
       errorText: 'Unsupported legacy protocol: /v1/chat/completions is not supported. Please use /v1/responses.',
+    });
+    expect(memoryWrite).toMatchObject({
+      action: 'failure',
+      endpoint: 'chat',
+      blockedEndpoint: 'chat',
+      preferredEndpoint: 'responses',
     });
 
     const order = await resolveUpstreamEndpointCandidates(

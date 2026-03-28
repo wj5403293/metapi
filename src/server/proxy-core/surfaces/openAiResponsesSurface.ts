@@ -506,7 +506,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           dispatchRequest,
           tryRecover,
           onAttemptFailure: async (ctx) => {
-            recordUpstreamEndpointFailure({
+            const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
               status: ctx.response.status,
@@ -527,14 +527,11 @@ export async function handleOpenAiResponsesSurfaceRequest(
               recoverApplied: ctx.recoverApplied === true,
               downgradeDecision: false,
               downgradeReason: null,
-              memoryWrite: {
-                action: 'failure',
-                blockedEndpoint: ctx.request.endpoint,
-              },
+              memoryWrite,
             });
           },
           onAttemptSuccess: async (ctx) => {
-            recordUpstreamEndpointSuccess({
+            const memoryWrite = recordUpstreamEndpointSuccess({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
             });
@@ -554,10 +551,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               recoverApplied: ctx.recoverApplied === true,
               downgradeDecision: false,
               downgradeReason: null,
-              memoryWrite: {
-                action: 'success',
-                preferredEndpoint: ctx.request.endpoint,
-              },
+              memoryWrite,
             });
           },
           shouldDowngrade: endpointStrategy.shouldDowngrade,
