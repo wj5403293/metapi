@@ -34,8 +34,14 @@ async function flushMicrotasks() {
 }
 
 describe('UpdateCenterSection', () => {
+  const originalDocument = globalThis.document;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    globalThis.document = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as Document;
     apiMock.getUpdateCenterStatus.mockResolvedValue({
       currentVersion: '1.2.3',
       config: {
@@ -100,6 +106,7 @@ describe('UpdateCenterSection', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    globalThis.document = originalDocument;
   });
 
   it('loads status, saves config updates, and renders streamed deploy logs', async () => {
@@ -131,13 +138,25 @@ describe('UpdateCenterSection', () => {
         checkboxInputs[2].props.onChange({ target: { checked: false } });
       });
 
-      const defaultSourceSelect = root.root.find((node) => (
-        node.type === 'select'
-        && node.props.value === 'github-release'
+      const defaultSourceTrigger = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('modern-select-trigger')
       ));
 
       await act(async () => {
-        defaultSourceSelect.props.onChange({ target: { value: 'docker-hub-tag' } });
+        defaultSourceTrigger.props.onClick();
+      });
+
+      const dockerHubOption = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('modern-select-option')
+        && collectText(node).includes('Docker Hub Tags')
+      ));
+
+      await act(async () => {
+        dockerHubOption.props.onClick();
       });
 
       const saveButton = root.root.find((node) => (
@@ -178,7 +197,76 @@ describe('UpdateCenterSection', () => {
       const text = collectText(root.root);
       expect(text).toContain('Running helm upgrade');
       expect(text).toContain('Waiting for rollout');
-      expect(text).toContain('任务状态：succeeded');
+      expect(text).toContain('任务状态 · 已完成');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('disables deploy actions when the helper is unhealthy', async () => {
+    apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
+      currentVersion: '1.2.3',
+      config: {
+        enabled: true,
+        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
+        namespace: 'ai',
+        releaseName: 'metapi',
+        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
+        imageRepository: '1467078763/metapi',
+        githubReleasesEnabled: true,
+        dockerHubTagsEnabled: true,
+        defaultDeploySource: 'github-release',
+      },
+      githubRelease: {
+        normalizedVersion: '1.3.0',
+      },
+      dockerHubTag: {
+        normalizedVersion: '1.3.1',
+      },
+      helper: {
+        ok: false,
+        healthy: false,
+        error: 'helper unavailable',
+      },
+      runningTask: null,
+      lastFinishedTask: null,
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const githubDeployButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn')
+        && collectText(node).includes('部署 GitHub 稳定版')
+      ));
+      const dockerDeployButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn')
+        && collectText(node).includes('部署 Docker Hub 标签')
+      ));
+
+      expect(githubDeployButton.props.disabled).toBe(true);
+      expect(dockerDeployButton.props.disabled).toBe(true);
+
+      await act(async () => {
+        githubDeployButton.props.onClick?.();
+        dockerDeployButton.props.onClick?.();
+      });
+
+      expect(apiMock.deployUpdateCenter).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
     }
