@@ -69,6 +69,7 @@ export default withMermaid(
             { text: '文档首页', link: '/' },
             { text: '快速上手', link: '/getting-started' },
             { text: '部署指南', link: '/deployment' },
+            { text: 'K3s 更新中心', link: '/k3s-update-center' },
           ],
         },
         {

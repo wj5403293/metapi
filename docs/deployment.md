@@ -17,6 +17,20 @@
 > - 当前不再提供 `Release` 压缩包 + Node.js 运行时的独立部署路径。
 > - 生产/长期运行请用 Docker 系列方案；桌面版面向单机本地使用；源码运行请走本地开发流程。
 
+## K3s / Helm 更新中心
+
+如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
+
+- 查看当前运行版本
+- 检查 GitHub Releases / Docker Hub 的稳定版
+- 通过集群内 helper 手动触发一次升级
+
+请直接阅读：
+
+- [K3s 更新中心](./k3s-update-center.md)
+
+这页会单独说明 helper 部署、主服务 token 对齐、设置页字段含义、实际升级顺序和已知限制。
+
 ## Zeabur 一键部署
 
 <a href="https://zeabur.com/templates/DOX5PR">
