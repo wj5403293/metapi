@@ -19,6 +19,18 @@
 
 ## K3s / Helm 更新中心
 
+如果你现在只是一个最普通的 Docker / Docker Compose 部署，请先跳过这节。
+
+这套能力只适用于：
+
+- 你已经在 K3s / Kubernetes 中部署了 Metapi
+- 而且当前 Metapi 是通过 Helm release 管理的
+
+它不适用于：
+
+- 只有一个裸 Docker Compose 容器
+- 想直接从管理后台更新外部 Docker 主机上的容器
+
 如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
 
 - 查看当前运行版本

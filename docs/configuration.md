@@ -34,7 +34,9 @@
 
 ## 更新中心与 Deploy Helper
 
-如果你要在管理后台里使用“K3s 更新中心”，除了设置页里的运行时字段，还需要补齐主服务和 helper 的环境变量。
+如果你现在只是一个普通 Docker / Docker Compose 部署，没有 K3s / Kubernetes、没有 Helm release、也没有 Deploy Helper，那么这一节可以先跳过。
+
+这一节只写给已经准备使用“K3s 更新中心”的用户。除了设置页里的运行时字段，还需要补齐主服务和 helper 的环境变量。
 
 ### 主 Metapi 服务
 
