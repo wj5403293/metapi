@@ -63,8 +63,11 @@ type ProxyDebugTraceDetailState = {
   error?: string;
 };
 
+type ProxyDebugTraceAttempt = ProxyDebugTraceDetail['attempts'][number];
+
 const PAGE_SIZES = [20, 50, 100];
 const DEFAULT_PAGE_SIZE = 50;
+const TRACE_TABLE_LIMIT = 20;
 const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
   codex: 'Codex',
   claude_code: 'Claude Code',
@@ -456,6 +459,7 @@ export default function ProxyLogs() {
   const [debugDraftSettings, setDebugDraftSettings] = useState<ProxyDebugSettingsState>(DEFAULT_PROXY_DEBUG_SETTINGS);
   const [debugTraces, setDebugTraces] = useState<ProxyDebugTraceListItem[]>([]);
   const [selectedDebugTraceId, setSelectedDebugTraceId] = useState<number | null>(null);
+  const [showDebugTraceDetailModal, setShowDebugTraceDetailModal] = useState(false);
   const [debugDetailById, setDebugDetailById] = useState<Record<number, ProxyDebugTraceDetailState>>({});
   const isMobile = useIsMobile(768);
   const toast = useToast();
@@ -726,7 +730,7 @@ export default function ProxyLogs() {
     const nextSelectedDebugTraceId = (
       currentSelectedDebugTraceId && items.some((item) => item.id === currentSelectedDebugTraceId)
         ? currentSelectedDebugTraceId
-        : items[0]?.id ?? null
+        : null
     );
     selectedDebugTraceIdRef.current = nextSelectedDebugTraceId;
     setSelectedDebugTraceId(nextSelectedDebugTraceId);
@@ -743,7 +747,7 @@ export default function ProxyLogs() {
   ) => {
     if (!options?.silent) setDebugPanelLoading(true);
     try {
-      const traceResponse = await api.getProxyDebugTraces({ limit: 20 });
+      const traceResponse = await api.getProxyDebugTraces({ limit: TRACE_TABLE_LIMIT });
       const items = Array.isArray(traceResponse?.items) ? traceResponse.items : [];
       await syncDebugTraceItems(items, { refreshSelectedDetail: options?.refreshSelectedDetail });
     } catch (error: any) {
@@ -760,7 +764,7 @@ export default function ProxyLogs() {
     try {
       const [runtimeSettings, traceResponse] = await Promise.all([
         api.getRuntimeSettings(),
-        api.getProxyDebugTraces({ limit: 20 }),
+        api.getProxyDebugTraces({ limit: TRACE_TABLE_LIMIT }),
       ]);
       applyLoadedDebugSettings(normalizeProxyDebugSettings(runtimeSettings), { syncDraft: true });
       const items = Array.isArray(traceResponse?.items) ? traceResponse.items : [];
@@ -777,9 +781,9 @@ export default function ProxyLogs() {
   }, [loadDebugState]);
 
   useEffect(() => {
-    if (!selectedDebugTraceId) return;
+    if (!selectedDebugTraceId || !showDebugTraceDetailModal) return;
     void loadDebugTraceDetail(selectedDebugTraceId);
-  }, [loadDebugTraceDetail, selectedDebugTraceId]);
+  }, [loadDebugTraceDetail, selectedDebugTraceId, showDebugTraceDetailModal]);
 
   useEffect(() => {
     if (!debugSettings.proxyDebugTraceEnabled) return;
@@ -846,6 +850,123 @@ export default function ProxyLogs() {
     }
   }, [expanded, loadDetail]);
   const selectedDebugTraceDetail = selectedDebugTraceId ? debugDetailById[selectedDebugTraceId] : undefined;
+  const selectedDebugTraceListItem = selectedDebugTraceId
+    ? debugTraces.find((trace) => trace.id === selectedDebugTraceId) || null
+    : null;
+  const closeDebugTraceDetailModal = useCallback(() => {
+    setShowDebugTraceDetailModal(false);
+  }, []);
+  const openDebugTraceDetailModal = useCallback((traceId: number) => {
+    selectedDebugTraceIdRef.current = traceId;
+    setSelectedDebugTraceId(traceId);
+    setShowDebugTraceDetailModal(true);
+    void loadDebugTraceDetail(traceId);
+  }, [loadDebugTraceDetail]);
+
+  function renderTraceStatusBadge(trace: ProxyDebugTraceListItem) {
+    const failed = trace.finalStatus === 'failed';
+    return (
+      <span className={`badge ${failed ? 'badge-error' : 'badge-success'}`} style={{ fontSize: 11 }}>
+        {failed ? '失败' : '成功'}
+      </span>
+    );
+  }
+
+  function renderAttemptDetail(attempt: ProxyDebugTraceAttempt) {
+    return (
+      <details key={attempt.id}>
+        <summary>
+          #{attempt.attemptIndex + 1} · {attempt.endpoint} · {attempt.responseStatus ?? '-'} · {attempt.requestPath}
+        </summary>
+        <pre style={debugCodeBlockStyle}>
+{`targetUrl: ${attempt.targetUrl}
+runtimeExecutor: ${attempt.runtimeExecutor || '-'}
+recoverApplied: ${attempt.recoverApplied ? 'true' : 'false'}
+downgradeDecision: ${attempt.downgradeDecision ? 'true' : 'false'}
+downgradeReason: ${attempt.downgradeReason || '-'}
+
+requestHeaders:
+${attempt.requestHeadersJson || '-'}
+
+requestBody:
+${attempt.requestBodyJson || '-'}
+
+responseHeaders:
+${attempt.responseHeadersJson || '-'}
+
+responseBody:
+${attempt.responseBodyJson || '-'}
+
+rawErrorText:
+${attempt.rawErrorText || '-'}
+
+memoryWrite:
+${attempt.memoryWriteJson || '-'}`}
+        </pre>
+      </details>
+    );
+  }
+
+  function renderDebugTraceDetailContent() {
+    if (!selectedDebugTraceId) {
+      return (
+        <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
+          暂无追踪详情。请选择一条最近追踪后再查看。
+        </div>
+      );
+    }
+
+    if (selectedDebugTraceDetail?.loading) {
+      return <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>加载追踪详情中...</div>;
+    }
+
+    if (selectedDebugTraceDetail?.error) {
+      return <div style={{ color: 'var(--color-danger)', fontSize: 13 }}>{selectedDebugTraceDetail.error}</div>;
+    }
+
+    if (!selectedDebugTraceDetail?.data) {
+      return <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无追踪详情。</div>;
+    }
+
+    return (
+      <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ ...debugSectionCardStyle, gap: 8 }}>
+          <div style={debugSectionLabelStyle}>基础信息</div>
+          <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
+            <div>下游路径：{selectedDebugTraceDetail.data.trace.downstreamPath || '-'}</div>
+            <div>Session：{selectedDebugTraceDetail.data.trace.sessionId || '-'}</div>
+            <div>模型：{selectedDebugTraceDetail.data.trace.requestedModel || '-'}</div>
+            <div>候选 endpoint：{selectedDebugTraceDetail.data.trace.endpointCandidatesJson || '-'}</div>
+            <div>最终上游路径：{selectedDebugTraceDetail.data.trace.finalUpstreamPath || '-'}</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: 10 }}>
+          <details open>
+            <summary>原始下游请求头</summary>
+            <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestHeadersJson || '-'}</pre>
+          </details>
+          <details>
+            <summary>原始下游请求体</summary>
+            <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestBodyJson || '-'}</pre>
+          </details>
+          <details>
+            <summary>最终响应</summary>
+            <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.finalResponseBodyJson || '-'}</pre>
+          </details>
+        </div>
+
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ fontWeight: 600 }}>Attempt 记录</div>
+          {selectedDebugTraceDetail.data.attempts.length === 0 ? (
+            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无 attempt 记录</div>
+          ) : (
+            selectedDebugTraceDetail.data.attempts.map(renderAttemptDetail)
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const filterControls = (
     <>
@@ -1177,7 +1298,11 @@ export default function ProxyLogs() {
         )}
       />
 
-      <div className="card" style={{ marginBottom: 12, display: 'grid', gap: 16 }}>
+      <div className="info-tip" style={{ marginBottom: 12 }}>
+        代理调试追踪只记录开启之后产生的新请求。调试设置通过弹窗维护，最近追踪保留在页内快速查看，完整请求链路按需打开详情。
+      </div>
+
+      <div className="card" style={{ marginBottom: 12, display: 'grid', gap: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'grid', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -1187,7 +1312,7 @@ export default function ProxyLogs() {
               </span>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              当前只显示开启后产生的新请求。页内会持续刷新最近追踪结果，调试设置已收进弹窗。
+              {debugSettings.proxyDebugTraceEnabled ? '开启后会自动刷新最近追踪结果。' : '未开启时不会记录新的调试追踪。'}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1220,7 +1345,7 @@ export default function ProxyLogs() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, minmax(0, 1fr))' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 18px', alignItems: 'center' }}>
           <div style={debugSummaryItemStyle}>
             <div style={debugSectionLabelStyle}>记录内容</div>
             <div style={{ fontSize: 13, color: 'var(--color-text-primary)', lineHeight: 1.6 }}>
@@ -1233,191 +1358,109 @@ export default function ProxyLogs() {
               {formatProxyDebugTargetSummary(debugSettings)}
             </div>
           </div>
-          <div style={debugSummaryItemStyle}>
-            <div style={debugSectionLabelStyle}>最近追踪数</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text-primary)' }}>
-              {debugTraces.length}
-            </div>
-          </div>
-          <div style={debugSummaryItemStyle}>
-            <div style={debugSectionLabelStyle}>最新一条</div>
-            <div style={{ fontSize: 13, color: 'var(--color-text-primary)', lineHeight: 1.6 }}>
-              {latestDebugTrace ? formatDateTimeLocal(latestDebugTrace.createdAt) : '暂无追踪'}
-            </div>
-          </div>
+          <span className="kpi-chip">最近 {debugTraces.length} 条</span>
+          <span className="kpi-chip kpi-chip-warning">
+            最新 {latestDebugTrace ? formatDateTimeLocal(latestDebugTrace.createdAt) : '暂无'}
+          </span>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: isMobile ? '1fr' : 'minmax(300px, 360px) minmax(0, 1fr)' }}>
-        <div className="card" style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <div style={{ fontWeight: 600 }}>最近调试追踪</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {debugSettings.proxyDebugTraceEnabled ? '开启中，结果会自动刷新' : '尚未开启'}
+      <div className="card" style={{ marginBottom: 12, overflowX: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>最近调试追踪</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+              按最新 20 条展示，点击查看详情会打开完整请求与 attempt 链路。
             </div>
           </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+            {debugSettings.proxyDebugTraceEnabled ? '开启中，结果会自动刷新' : '尚未开启'}
+          </div>
+        </div>
 
-          {debugPanelLoading && debugTraces.length === 0 ? (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>加载调试追踪中...</div>
-          ) : debugTraces.length === 0 ? (
-            <div
-              style={{
-                padding: 14,
-                borderRadius: 'var(--radius-md)',
-                border: '1px dashed var(--color-border)',
-                color: 'var(--color-text-muted)',
-                fontSize: 13,
-                lineHeight: 1.7,
-              }}
-            >
-              {debugSettings.proxyDebugTraceEnabled
-                ? '暂时还没有新追踪。这里只显示开启后产生的新请求，等下一次代理请求进入就会出现在这里。'
-                : '调试追踪尚未开启。点击上方“开启调试”或“调试设置”后，新的代理请求会出现在这里。'}
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gap: 8 }}>
-              {debugTraces.map((trace) => (
-                <button
-                  key={trace.id}
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{
-                    justifyContent: 'flex-start',
-                    textAlign: 'left',
-                    padding: 0,
-                    border: 'none',
-                    background: 'transparent',
-                  }}
-                  onClick={() => {
-                    selectedDebugTraceIdRef.current = trace.id;
-                    setSelectedDebugTraceId(trace.id);
-                    void loadDebugTraceDetail(trace.id);
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '100%',
-                      display: 'grid',
-                      gap: 6,
-                      padding: 14,
-                      borderRadius: 'var(--radius-md)',
-                      border: '1px solid var(--color-border-light)',
-                      background: selectedDebugTraceId === trace.id
-                        ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-card))'
-                        : 'var(--color-bg-card)',
-                    }}
+        {debugPanelLoading && debugTraces.length === 0 ? (
+          <div style={{ color: 'var(--color-text-muted)', fontSize: 13, paddingBottom: 12 }}>加载调试追踪中...</div>
+        ) : debugTraces.length === 0 ? (
+          <div
+            style={{
+              padding: 14,
+              borderRadius: 'var(--radius-md)',
+              border: '1px dashed var(--color-border)',
+              color: 'var(--color-text-muted)',
+              fontSize: 13,
+              lineHeight: 1.7,
+            }}
+          >
+            {debugSettings.proxyDebugTraceEnabled
+              ? '暂时还没有新追踪。这里只显示开启后产生的新请求，等下一次代理请求进入就会出现在这里。'
+              : '调试追踪尚未开启。点击上方“开启调试”或“调试设置”后，新的代理请求会出现在这里。'}
+          </div>
+        ) : isMobile ? (
+          <div className="mobile-card-list">
+            {debugTraces.map((trace) => (
+              <MobileCard
+                key={trace.id}
+                title={trace.sessionId || `trace-${trace.id}`}
+                subtitle={formatDateTimeLocal(trace.createdAt)}
+                compact
+                headerActions={renderTraceStatusBadge(trace)}
+                footerActions={(
+                  <button
+                    type="button"
+                    className="btn btn-link"
+                    onClick={() => openDebugTraceDetailModal(trace.id)}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                        {trace.sessionId || `trace-${trace.id}`}
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                        {formatDateTimeLocal(trace.createdAt)}
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                      {trace.requestedModel || '-'} · {trace.downstreamPath}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                      {trace.finalStatus || 'pending'} · {trace.finalUpstreamPath || '-'}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="card" style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <div style={{ fontWeight: 600 }}>追踪详情</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              选择左侧一条追踪后查看完整请求与 attempt 链路
-            </div>
-          </div>
-
-          {!selectedDebugTraceId ? (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
-              暂无追踪详情。开启调试后等待新请求，或从左侧选择一条最近追踪。
-            </div>
-          ) : selectedDebugTraceDetail?.loading ? (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>加载追踪详情中...</div>
-          ) : selectedDebugTraceDetail?.error ? (
-            <div style={{ color: 'var(--color-danger)', fontSize: 13 }}>{selectedDebugTraceDetail.error}</div>
-          ) : selectedDebugTraceDetail?.data ? (
-            <div style={{ display: 'grid', gap: 12 }}>
-              <div style={{ ...debugSectionCardStyle, gap: 8 }}>
-                <div style={debugSectionLabelStyle}>基础信息</div>
-                <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-                  <div>下游路径：{selectedDebugTraceDetail.data.trace.downstreamPath || '-'}</div>
-                  <div>Session：{selectedDebugTraceDetail.data.trace.sessionId || '-'}</div>
-                  <div>模型：{selectedDebugTraceDetail.data.trace.requestedModel || '-'}</div>
-                  <div>候选 endpoint：{selectedDebugTraceDetail.data.trace.endpointCandidatesJson || '-'}</div>
-                  <div>最终上游路径：{selectedDebugTraceDetail.data.trace.finalUpstreamPath || '-'}</div>
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gap: 10 }}>
-                <details open>
-                  <summary>原始下游请求头</summary>
-                  <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestHeadersJson || '-'}</pre>
-                </details>
-                <details>
-                  <summary>原始下游请求体</summary>
-                  <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestBodyJson || '-'}</pre>
-                </details>
-                <details>
-                  <summary>最终响应</summary>
-                  <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.finalResponseBodyJson || '-'}</pre>
-                </details>
-              </div>
-
-              <div style={{ display: 'grid', gap: 8 }}>
-                <div style={{ fontWeight: 600 }}>Attempt 记录</div>
-                {selectedDebugTraceDetail.data.attempts.length === 0 ? (
-                  <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无 attempt 记录</div>
-                ) : (
-                  selectedDebugTraceDetail.data.attempts.map((attempt) => (
-                    <details key={attempt.id}>
-                      <summary>
-                        #{attempt.attemptIndex + 1} · {attempt.endpoint} · {attempt.responseStatus ?? '-'} · {attempt.requestPath}
-                      </summary>
-                      <pre style={debugCodeBlockStyle}>
-{`targetUrl: ${attempt.targetUrl}
-runtimeExecutor: ${attempt.runtimeExecutor || '-'}
-recoverApplied: ${attempt.recoverApplied ? 'true' : 'false'}
-downgradeDecision: ${attempt.downgradeDecision ? 'true' : 'false'}
-downgradeReason: ${attempt.downgradeReason || '-'}
-
-requestHeaders:
-${attempt.requestHeadersJson || '-'}
-
-requestBody:
-${attempt.requestBodyJson || '-'}
-
-responseHeaders:
-${attempt.responseHeadersJson || '-'}
-
-responseBody:
-${attempt.responseBodyJson || '-'}
-
-rawErrorText:
-${attempt.rawErrorText || '-'}
-
-memoryWrite:
-${attempt.memoryWriteJson || '-'}`}
-                      </pre>
-                    </details>
-                  ))
+                    查看详情
+                  </button>
                 )}
-              </div>
-            </div>
-          ) : (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
-              暂无追踪详情。
-            </div>
-          )}
-        </div>
+              >
+                <MobileField label="模型" value={trace.requestedModel || '-'} />
+                <MobileField label="下游路径" value={trace.downstreamPath || '-'} />
+                <MobileField label="上游路径" value={trace.finalUpstreamPath || '-'} />
+                <MobileField label="客户端" value={trace.clientKind || '-'} />
+              </MobileCard>
+            ))}
+          </div>
+        ) : (
+          <table className="data-table" style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>Session</th>
+                <th>模型</th>
+                <th>下游路径</th>
+                <th>上游路径</th>
+                <th>客户端</th>
+                <th>{tr('状态')}</th>
+                <th style={{ textAlign: 'right' }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {debugTraces.map((trace) => (
+                <tr key={trace.id}>
+                  <td style={{ fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
+                    {formatDateTimeLocal(trace.createdAt)}
+                  </td>
+                  <td style={{ fontSize: 12, fontWeight: 600 }}>{trace.sessionId || `trace-${trace.id}`}</td>
+                  <td style={{ fontSize: 12 }}>{trace.requestedModel || '-'}</td>
+                  <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{trace.downstreamPath || '-'}</td>
+                  <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{trace.finalUpstreamPath || '-'}</td>
+                  <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{trace.clientKind || '-'}</td>
+                  <td>{renderTraceStatusBadge(trace)}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      onClick={() => openDebugTraceDetailModal(trace.id)}
+                    >
+                      查看详情
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {isMobile ? (
@@ -1449,6 +1492,31 @@ ${attempt.memoryWriteJson || '-'}`}
           closeOnEscape
         >
           {debugSettingsForm}
+        </CenteredModal>
+      )}
+
+      {isMobile ? (
+        <MobileDrawer
+          open={showDebugTraceDetailModal}
+          onClose={closeDebugTraceDetailModal}
+          title={selectedDebugTraceListItem?.sessionId || '追踪详情'}
+          closeLabel="关闭追踪详情"
+          side="right"
+        >
+          <div style={{ padding: 16, display: 'grid', gap: 16 }}>
+            {renderDebugTraceDetailContent()}
+          </div>
+        </MobileDrawer>
+      ) : (
+        <CenteredModal
+          open={showDebugTraceDetailModal}
+          onClose={closeDebugTraceDetailModal}
+          title={selectedDebugTraceListItem?.sessionId || '追踪详情'}
+          maxWidth={920}
+          closeOnBackdrop
+          closeOnEscape
+        >
+          {renderDebugTraceDetailContent()}
         </CenteredModal>
       )}
 
