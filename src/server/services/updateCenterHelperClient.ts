@@ -1,7 +1,9 @@
-import { fetch } from 'undici';
+import { fetch, type RequestInit as UndiciRequestInit } from 'undici';
 
 import type { UpdateCenterConfig } from './updateCenterConfigService.js';
 import type { UpdateCenterVersionSource } from './updateCenterVersionService.js';
+
+const UPDATE_CENTER_HELPER_STATUS_TIMEOUT_MS = 5_000;
 
 export type UpdateCenterHelperStatus = {
   ok: boolean;
@@ -27,6 +29,34 @@ export type UpdateCenterDeploySummary = {
 type HelperDeployLogEvent = {
   message: string;
 };
+
+async function fetchHelperJsonWithTimeout(url: string, init: UndiciRequestInit): Promise<unknown> {
+  const controller = new AbortController();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    controller.abort();
+  }, UPDATE_CENTER_HELPER_STATUS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`helper status failed with HTTP ${response.status}`);
+    }
+    return await response.json();
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`deploy helper status timeout (${Math.round(UPDATE_CENTER_HELPER_STATUS_TIMEOUT_MS / 1000)}s)`);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+  }
+}
 
 function buildHelperHeaders(token: string, accept = 'application/json') {
   return {
@@ -78,13 +108,9 @@ export async function getUpdateCenterHelperStatus(
     namespace: config.namespace,
     releaseName: config.releaseName,
   });
-  const response = await fetch(`${config.helperBaseUrl.replace(/\/$/, '')}/status?${query.toString()}`, {
+  return await fetchHelperJsonWithTimeout(`${config.helperBaseUrl.replace(/\/$/, '')}/status?${query.toString()}`, {
     headers: buildHelperHeaders(helperToken),
-  });
-  if (!response.ok) {
-    throw new Error(`helper status failed with HTTP ${response.status}`);
-  }
-  return await response.json() as UpdateCenterHelperStatus;
+  }) as UpdateCenterHelperStatus;
 }
 
 export async function streamUpdateCenterDeploy(

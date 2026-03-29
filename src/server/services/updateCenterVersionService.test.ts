@@ -189,6 +189,14 @@ describe('update center version service', () => {
       });
       expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/repos/cita-777/metapi/releases');
     });
+
+    it('maps aborted GitHub lookups to a timeout error', async () => {
+      const abortError = new Error('aborted');
+      (abortError as Error & { name: string }).name = 'AbortError';
+      fetchMock.mockRejectedValue(abortError);
+
+      await expect(fetchLatestStableGitHubRelease()).rejects.toThrow('GitHub releases lookup timeout');
+    });
   });
 
   describe('fetchLatestDockerHubTag', () => {

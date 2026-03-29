@@ -57,35 +57,52 @@ function summarizeHelperError(error: unknown) {
   return String(error || 'unknown helper error');
 }
 
+async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Promise<{
+  value: T | null;
+  error: string | null;
+}> {
+  if (!enabled) {
+    return {
+      value: null,
+      error: null,
+    };
+  }
+
+  try {
+    return {
+      value: await loader(),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      value: null,
+      error: summarizeHelperError(error),
+    };
+  }
+}
+
 async function buildUpdateCenterStatus() {
   const config = await loadUpdateCenterConfig();
+  const helperToken = getUpdateCenterHelperToken();
 
-  let githubRelease: UpdateCenterVersionCandidate | null = null;
-  let dockerHubTag: UpdateCenterVersionCandidate | null = null;
-  let helper: Record<string, unknown> = {
+  const [githubLookup, dockerLookup, helperLookup] = await Promise.all([
+    settleOptional(config.githubReleasesEnabled, async () => await fetchLatestStableGitHubRelease()),
+    settleOptional(config.dockerHubTagsEnabled, async () => await fetchLatestDockerHubTag()),
+    settleOptional(!!config.helperBaseUrl, async () => {
+      if (!helperToken) {
+        throw new Error('DEPLOY_HELPER_TOKEN is required');
+      }
+      return await getUpdateCenterHelperStatus(config, helperToken);
+    }),
+  ]);
+
+  const githubRelease = githubLookup.value as UpdateCenterVersionCandidate | null;
+  const dockerHubTag = dockerLookup.value as UpdateCenterVersionCandidate | null;
+  const helper: Record<string, unknown> = helperLookup.value || {
     ok: false,
     healthy: false,
-    error: null,
+    error: helperLookup.error,
   };
-
-  if (config.githubReleasesEnabled) {
-    githubRelease = await fetchLatestStableGitHubRelease();
-  }
-  if (config.dockerHubTagsEnabled) {
-    dockerHubTag = await fetchLatestDockerHubTag();
-  }
-
-  if (config.helperBaseUrl) {
-    try {
-      helper = await getUpdateCenterHelperStatus(config, getUpdateCenterHelperToken());
-    } catch (error) {
-      helper = {
-        ok: false,
-        healthy: false,
-        error: summarizeHelperError(error),
-      };
-    }
-  }
 
   const tasks = getDeployTasks();
   const runningTask = tasks.find((task) => task.status === 'pending' || task.status === 'running') || null;

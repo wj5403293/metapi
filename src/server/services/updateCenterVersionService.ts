@@ -1,4 +1,4 @@
-import { fetch } from 'undici';
+import { fetch, type RequestInit as UndiciRequestInit } from 'undici';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -31,6 +31,35 @@ export type GitHubReleaseRecord = {
 const STABLE_SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/i;
 const GITHUB_RELEASES_URL = 'https://api.github.com/repos/cita-777/metapi/releases';
 const DOCKER_HUB_TAGS_URL = 'https://hub.docker.com/v2/repositories/1467078763/metapi/tags?page_size=100';
+const UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS = 5_000;
+
+async function fetchJsonWithTimeout(url: string, init: UndiciRequestInit, timeoutLabel: string): Promise<unknown> {
+  const controller = new AbortController();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    controller.abort();
+  }, UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`${timeoutLabel} failed with HTTP ${response.status}`);
+    }
+    return await response.json();
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`${timeoutLabel} timeout (${Math.round(UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS / 1000)}s)`);
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+  }
+}
 
 export function parseStableSemVer(input: string | null | undefined): StableSemVer | null {
   const raw = String(input || '').trim();
@@ -113,30 +142,22 @@ export function resolvePreferredDeploySource(input: {
 }
 
 export async function fetchLatestStableGitHubRelease(): Promise<UpdateCenterVersionCandidate | null> {
-  const response = await fetch(GITHUB_RELEASES_URL, {
+  const releases = await fetchJsonWithTimeout(GITHUB_RELEASES_URL, {
     headers: {
       accept: 'application/vnd.github+json',
       'user-agent': 'metapi-update-center/1.0',
     },
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub releases lookup failed with HTTP ${response.status}`);
-  }
-  const releases = await response.json() as GitHubReleaseRecord[];
+  }, 'GitHub releases lookup') as GitHubReleaseRecord[];
   return selectLatestStableGitHubRelease(Array.isArray(releases) ? releases : []);
 }
 
 export async function fetchLatestDockerHubTag(): Promise<UpdateCenterVersionCandidate | null> {
-  const response = await fetch(DOCKER_HUB_TAGS_URL, {
+  const payload = await fetchJsonWithTimeout(DOCKER_HUB_TAGS_URL, {
     headers: {
       accept: 'application/json',
       'user-agent': 'metapi-update-center/1.0',
     },
-  });
-  if (!response.ok) {
-    throw new Error(`Docker Hub tag lookup failed with HTTP ${response.status}`);
-  }
-  const payload = await response.json() as { results?: Array<{ name?: string | null }> };
+  }, 'Docker Hub tag lookup') as { results?: Array<{ name?: string | null }> };
   const tags = Array.isArray(payload?.results)
     ? payload.results.map((item) => String(item?.name || '')).filter(Boolean)
     : [];

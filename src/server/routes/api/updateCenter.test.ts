@@ -170,6 +170,44 @@ describe('update center routes', () => {
     });
   });
 
+  it('returns partial status when a single version source lookup fails', async () => {
+    fetchLatestStableGitHubReleaseMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
+    fetchLatestDockerHubTagMock.mockResolvedValue({
+      source: 'docker-hub-tag',
+      rawVersion: '1.3.1',
+      normalizedVersion: '1.3.1',
+      url: null,
+    });
+    getUpdateCenterHelperStatusMock.mockResolvedValue({
+      ok: true,
+      releaseName: 'metapi',
+      namespace: 'ai',
+      revision: '12',
+      imageRepository: '1467078763/metapi',
+      imageTag: '1.2.3',
+      healthy: true,
+    });
+
+    await saveValidConfig();
+
+    const statusResponse = await app.inject({
+      method: 'GET',
+      url: '/api/update-center/status',
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    expect(statusResponse.json()).toMatchObject({
+      githubRelease: null,
+      dockerHubTag: {
+        normalizedVersion: '1.3.1',
+      },
+      helper: {
+        ok: true,
+        healthy: true,
+      },
+    });
+  });
+
   it('dedupes deploy requests while a task is already running', async () => {
     await saveValidConfig();
 
