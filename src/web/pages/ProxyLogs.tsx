@@ -474,6 +474,7 @@ export default function ProxyLogs() {
   const loadSeq = useRef(0);
   const selectedDebugTraceIdRef = useRef<number | null>(null);
   const debugDetailByIdRef = useRef<Record<number, ProxyDebugTraceDetailState>>({});
+  const debugDetailInFlightRef = useRef<Set<number>>(new Set());
   const fromApiBoundary = toApiTimeBoundary(fromInput);
   const toApiBoundaryValue = toApiTimeBoundary(toInput);
   const hasInvalidTimeRange = Boolean(
@@ -701,15 +702,20 @@ export default function ProxyLogs() {
 
   const loadDebugTraceDetail = useCallback(async (
     id: number,
-    options?: { force?: boolean; suppressToast?: boolean },
+    options?: { force?: boolean; suppressToast?: boolean; preserveVisibleData?: boolean },
   ) => {
     const existing = debugDetailByIdRef.current[id];
+    if (debugDetailInFlightRef.current.has(id)) return;
     if (!options?.force && (existing?.loading || existing?.data)) return;
 
-    setDebugDetailById((current) => ({
-      ...current,
-      [id]: { loading: true },
-    }));
+    debugDetailInFlightRef.current.add(id);
+
+    if (!options?.preserveVisibleData || !existing?.data) {
+      setDebugDetailById((current) => ({
+        ...current,
+        [id]: { loading: true },
+      }));
+    }
 
     try {
       const data = await api.getProxyDebugTraceDetail(id);
@@ -726,6 +732,8 @@ export default function ProxyLogs() {
       if (!options?.suppressToast) {
         toast.error(message);
       }
+    } finally {
+      debugDetailInFlightRef.current.delete(id);
     }
   }, [toast]);
 
@@ -746,9 +754,10 @@ export default function ProxyLogs() {
       await loadDebugTraceDetail(nextSelectedDebugTraceId, {
         force: true,
         suppressToast: true,
+        preserveVisibleData: showDebugTraceDetailModal,
       });
     }
-  }, [loadDebugTraceDetail]);
+  }, [loadDebugTraceDetail, showDebugTraceDetailModal]);
 
   const loadDebugTraceList = useCallback(async (
     options?: { silent?: boolean; refreshSelectedDetail?: boolean; suppressToast?: boolean },
@@ -868,8 +877,7 @@ export default function ProxyLogs() {
     selectedDebugTraceIdRef.current = traceId;
     setSelectedDebugTraceId(traceId);
     setShowDebugTraceDetailModal(true);
-    void loadDebugTraceDetail(traceId);
-  }, [loadDebugTraceDetail]);
+  }, []);
 
   function renderTraceStatusBadge(trace: ProxyDebugTraceListItem) {
     const failed = trace.finalStatus === 'failed';
