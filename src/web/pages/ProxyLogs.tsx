@@ -137,9 +137,52 @@ const debugCodeBlockStyle: React.CSSProperties = {
   borderRadius: 'var(--radius-sm)',
   border: '1px solid var(--color-border-light)',
   background: 'var(--color-bg)',
+  fontFamily: 'var(--font-mono)',
   fontSize: 12,
   lineHeight: 1.5,
   overflowX: 'auto',
+};
+const detailInfoGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+  gap: 12,
+};
+const detailInfoItemStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 4,
+  minWidth: 0,
+};
+const detailInfoLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--color-text-muted)',
+};
+const detailInfoValueStyle: React.CSSProperties = {
+  fontSize: 13,
+  color: 'var(--color-text-primary)',
+  fontWeight: 600,
+  minWidth: 0,
+  wordBreak: 'break-word',
+};
+const detailSectionTitleStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: 'var(--color-text-primary)',
+};
+const detailExpandableCardStyle: React.CSSProperties = {
+  border: '1px solid var(--color-border-light)',
+  borderRadius: 'var(--radius-sm)',
+  background: 'var(--color-bg-card)',
+  overflow: 'hidden',
+};
+const detailExpandableSummaryStyle: React.CSSProperties = {
+  cursor: 'pointer',
+  listStyle: 'none',
+  padding: '10px 12px',
+  fontSize: 13,
+  fontWeight: 600,
+  color: 'var(--color-text-primary)',
+  borderBottom: '1px solid var(--color-border-light)',
+  background: 'color-mix(in srgb, var(--color-bg-card) 86%, var(--color-bg) 14%)',
 };
 
 function formatLatency(ms: number) {
@@ -890,11 +933,35 @@ export default function ProxyLogs() {
 
   function renderAttemptDetail(attempt: ProxyDebugTraceAttempt) {
     return (
-      <details key={attempt.id}>
-        <summary>
+      <details key={attempt.id} style={detailExpandableCardStyle}>
+        <summary style={detailExpandableSummaryStyle}>
           #{attempt.attemptIndex + 1} · {attempt.endpoint} · {attempt.responseStatus ?? '-'} · {attempt.requestPath}
         </summary>
-        <pre style={debugCodeBlockStyle}>
+        <div style={{ padding: 12, display: 'grid', gap: 12 }}>
+          <div style={detailInfoGridStyle}>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>目标地址</div>
+              <div style={{ ...detailInfoValueStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{attempt.targetUrl || '-'}</div>
+            </div>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>执行器</div>
+              <div style={detailInfoValueStyle}>{attempt.runtimeExecutor || '-'}</div>
+            </div>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>恢复逻辑</div>
+              <div style={detailInfoValueStyle}>{attempt.recoverApplied ? '已应用' : '未应用'}</div>
+            </div>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>降级决策</div>
+              <div style={detailInfoValueStyle}>{attempt.downgradeDecision ? '已触发' : '未触发'}</div>
+            </div>
+          </div>
+          {attempt.downgradeReason ? (
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              降级原因：{attempt.downgradeReason}
+            </div>
+          ) : null}
+          <pre style={debugCodeBlockStyle}>
 {`targetUrl: ${attempt.targetUrl}
 runtimeExecutor: ${attempt.runtimeExecutor || '-'}
 recoverApplied: ${attempt.recoverApplied ? 'true' : 'false'}
@@ -918,7 +985,8 @@ ${attempt.rawErrorText || '-'}
 
 memoryWrite:
 ${attempt.memoryWriteJson || '-'}`}
-        </pre>
+          </pre>
+        </div>
       </details>
     );
   }
@@ -946,34 +1014,57 @@ ${attempt.memoryWriteJson || '-'}`}
 
     return (
       <div style={{ display: 'grid', gap: 12 }}>
-        <div style={{ ...formSectionStyle, gap: 8 }}>
-          <div style={formSectionLabelStyle}>基础信息</div>
-          <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-            <div>下游路径：{selectedDebugTraceDetail.data.trace.downstreamPath || '-'}</div>
-            <div>Session：{selectedDebugTraceDetail.data.trace.sessionId || '-'}</div>
-            <div>模型：{selectedDebugTraceDetail.data.trace.requestedModel || '-'}</div>
-            <div>候选 endpoint：{selectedDebugTraceDetail.data.trace.endpointCandidatesJson || '-'}</div>
-            <div>最终上游路径：{selectedDebugTraceDetail.data.trace.finalUpstreamPath || '-'}</div>
+        <div style={{ ...formSectionStyle, gap: 10 }}>
+          <div style={detailSectionTitleStyle}>基础信息</div>
+          <div style={detailInfoGridStyle}>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>下游路径</div>
+              <div style={detailInfoValueStyle}>{selectedDebugTraceDetail.data.trace.downstreamPath || '-'}</div>
+            </div>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>Session</div>
+              <div style={detailInfoValueStyle}>{selectedDebugTraceDetail.data.trace.sessionId || '-'}</div>
+            </div>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>模型</div>
+              <div style={detailInfoValueStyle}>{selectedDebugTraceDetail.data.trace.requestedModel || '-'}</div>
+            </div>
+            <div style={detailInfoItemStyle}>
+              <div style={detailInfoLabelStyle}>最终上游路径</div>
+              <div style={detailInfoValueStyle}>{selectedDebugTraceDetail.data.trace.finalUpstreamPath || '-'}</div>
+            </div>
+            <div style={{ ...detailInfoItemStyle, gridColumn: '1 / -1' }}>
+              <div style={detailInfoLabelStyle}>候选 endpoint</div>
+              <code style={{ ...debugCodeBlockStyle, margin: 0, fontSize: 11 }}>
+                {selectedDebugTraceDetail.data.trace.endpointCandidatesJson || '-'}
+              </code>
+            </div>
           </div>
         </div>
 
         <div style={{ display: 'grid', gap: 10 }}>
-          <details open>
-            <summary>原始下游请求头</summary>
-            <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestHeadersJson || '-'}</pre>
+          <details open style={detailExpandableCardStyle}>
+            <summary style={detailExpandableSummaryStyle}>原始下游请求头</summary>
+            <div style={{ padding: 12 }}>
+              <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestHeadersJson || '-'}</pre>
+            </div>
           </details>
-          <details>
-            <summary>原始下游请求体</summary>
-            <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestBodyJson || '-'}</pre>
+          <details style={detailExpandableCardStyle}>
+            <summary style={detailExpandableSummaryStyle}>原始下游请求体</summary>
+            <div style={{ padding: 12 }}>
+              <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.requestBodyJson || '-'}</pre>
+            </div>
           </details>
-          <details>
-            <summary>最终响应</summary>
-            <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.finalResponseBodyJson || '-'}</pre>
+          <details style={detailExpandableCardStyle}>
+            <summary style={detailExpandableSummaryStyle}>最终响应</summary>
+            <div style={{ padding: 12 }}>
+              <pre style={debugCodeBlockStyle}>{selectedDebugTraceDetail.data.trace.finalResponseBodyJson || '-'}</pre>
+            </div>
           </details>
         </div>
 
         <div style={{ display: 'grid', gap: 8 }}>
-          <div style={{ fontWeight: 600 }}>Attempt 记录</div>
+          <div style={detailSectionTitleStyle}>Attempt 记录</div>
           {selectedDebugTraceDetail.data.attempts.length === 0 ? (
             <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无 attempt 记录</div>
           ) : (
