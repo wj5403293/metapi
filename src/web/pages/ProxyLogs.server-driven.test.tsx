@@ -323,6 +323,42 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('opens debug trace detail on demand instead of preloading the first trace inline', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).not.toHaveBeenCalled();
+
+      const viewDetailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+
+      await act(async () => {
+        viewDetailButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(701);
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).toContain('Attempt 记录');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('polls debug traces after tracing is enabled so new results are not hidden behind the settings modal', async () => {
     vi.useFakeTimers();
     apiMock.getRuntimeSettings.mockResolvedValue({
